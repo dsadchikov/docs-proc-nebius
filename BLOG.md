@@ -119,7 +119,7 @@ The H100 SXM handles `Qwen2.5-VL-7B-Instruct` comfortably: model loads in under 
 
 ## Try It
 
-The full source, blueprints, eval scripts, and smoke tests are on GitHub: [docs-proc-nebius](https://github.com/your-username/docs-proc-nebius).
+The full source, blueprints, eval scripts, and smoke tests are on GitHub: [docs-proc-nebius](https://github.com/dsadchikov/docs-proc-nebius).
 
 To run locally in mock mode: `docker compose -f docker-compose.cpu.yml up --build` — no GPU required.
 
