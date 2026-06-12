@@ -71,22 +71,22 @@ graph TB
     Backend -.->|write recognitionResult| DDB
 ```
 
-**Standalone usage** — два варианта передачи документа:
+**Standalone usage** — two document delivery options:
 
 ```
-Вариант A (base64, прямой):
+Option A (base64, direct):
   Client → POST /recognize { document: { type: "base64", value: "...", mime_type: "image/jpeg" } }
          ← 200 Recognition_Result JSON
 
-Вариант B (через NOS):
-  1. Client → GET /inbound/presign?filename=doc.jpg  (новый endpoint, опционально)
+Option B (via NOS):
+  1. Client → GET /inbound/presign?filename=doc.jpg  (new endpoint, optional)
            ← { presigned_put_url, nos_key }
-  2. Client → PUT <presigned_put_url>  (прямо в NOS)
+  2. Client → PUT <presigned_put_url>  (directly to NOS)
   3. Client → POST /recognize { document: { type: "nebius_object", value: nos_key } }
            ← 200 Recognition_Result JSON
 ```
 
-Оба варианта не требуют AWS, DynamoDB, или lity-backend.
+Both options require no AWS, DynamoDB, or lity-backend.
 
 ### NOS Bucket Structure
 
@@ -94,7 +94,7 @@ graph TB
 your-nos-bucket/
 │
 ├── blueprints/
-│   ├── _catalog.json                    ← реестр всех blueprints (единая точка входа)
+│   ├── _catalog.json                    ← registry of all blueprints (single entry point)
 │   ├── default/
 │   │   └── v1.json                      ← catch-all blueprint
 │   ├── passport/
@@ -104,15 +104,15 @@ your-nos-bucket/
 │
 ├── inbound/
 │   └── YYYY/MM/DD/HH/mm/
-│       └── <document_id>.<ext>          ← загружен lity-backend перед /recognize
+│       └── <document_id>.<ext>          ← uploaded by client before /recognize
 │
 ├── outbound/
 │   └── YYYY/MM/DD/HH/mm/
-│       └── <document_id>.json           ← Recognition_Result (пишет Endpoint)
+│       └── <document_id>.json           ← Recognition_Result (written by Endpoint)
 │
 └── logs/
     └── YYYY/MM/DD/HH/mm/
-        ├── req_<request_id>.json        ← лог каждого /recognize запроса
+        ├── req_<request_id>.json        ← log entry per /recognize request
         └── job_<job_id>.json            ← summary batch job
 ```
 
@@ -143,7 +143,7 @@ your-nos-bucket/
     },
     {
       "id": "residence_permit_ltu_front",
-      "name": "ВНЖ Литвы (лицевая сторона)",
+      "name": "Lithuanian Residence Permit (front side)",
       "status": "active",
       "latest_version": 1,
       "path": "blueprints/residence_permit_ltu_front/v1.json",
@@ -154,7 +154,7 @@ your-nos-bucket/
 }
 ```
 
-Статусы: `active` | `draft` | `deprecated`. `BlueprintStore` загружает только `active` при старте.
+Statuses: `active` | `draft` | `deprecated`. `BlueprintStore` loads only `active` entries at startup.
 
 ### Request Routing (nginx layer)
 
@@ -194,17 +194,17 @@ sequenceDiagram
     participant NOS as Nebius Object Storage
     participant EP as Nebius Endpoint
 
-    alt Вариант A — base64 (малые документы, < ~5 MB)
+    alt Option A — base64 (small documents, < ~5 MB)
         C->>EP: POST /recognize {document:{type:"base64",value:"...",mime_type:"image/jpeg"}, blueprint_id, mode}
         EP->>EP: VLM inference → Recognition_Result
         EP->>NOS: PUT outbound/YYYY/MM/DD/HH/mm/<req_id>.json (best-effort)
         EP->>NOS: PUT logs/YYYY/MM/DD/HH/mm/req_<req_id>.json (best-effort)
         EP-->>C: 200 Recognition_Result JSON
-    else Вариант B — через NOS (большие файлы, PDF, batch)
+    else Option B — via NOS (large files, PDF, batch)
         C->>EP: GET /inbound/presign?filename=doc.pdf
         EP->>NOS: generate_presigned_put_url(inbound/YYYY/MM/DD/HH/mm/<uuid>.pdf)
         EP-->>C: {presigned_put_url, nos_key}
-        C->>NOS: PUT <presigned_put_url> (document bytes, напрямую в NOS)
+        C->>NOS: PUT <presigned_put_url> (document bytes, directly to NOS)
         C->>EP: POST /recognize {document:{type:"nebius_object",value:nos_key}, blueprint_id, mode}
         EP->>NOS: GetObject inbound/... → document bytes
         EP->>EP: VLM inference → Recognition_Result
@@ -304,9 +304,9 @@ nebius-endpoint/
 
 #### GET /inbound/presign
 
-Генерирует NOS presigned PUT URL для загрузки документа клиентом напрямую в NOS. Используется в standalone Варианте B.
+Generates a NOS presigned PUT URL for direct client-to-NOS document upload. Used in standalone Option B.
 
-Query params: `filename=<original_filename>` (используется для определения расширения)
+Query params: `filename=<original_filename>` (used to determine file extension)
 
 Response (HTTP 200):
 ```json
@@ -317,9 +317,9 @@ Response (HTTP 200):
 }
 ```
 
-Клиент выполняет `PUT <presigned_put_url>` с байтами документа, затем передаёт `nos_key` в запрос `/recognize`.
+Client issues `PUT <presigned_put_url>` with document bytes, then passes `nos_key` to `/recognize`.
 
-Если NOS не настроен (`S3_ACCESS_KEY` пуст) → HTTP 503 `{ "message": "Object storage not configured" }`.
+If NOS is not configured (`S3_ACCESS_KEY` empty) → HTTP 503 `{ "message": "Object storage not configured" }`.
 
 #### POST /recognize
 
@@ -860,7 +860,7 @@ docs-proc-nebius/            ← new public repo, MIT license
 
 ### Recognition_Result (HTTP response + NOS outbound)
 
-Возвращается в теле HTTP 200 ответа при любом `/recognize` запросе. Дополнительно записывается в NOS `outbound/YYYY/MM/DD/HH/mm/<request_id>.json` (best-effort).
+Returned in the HTTP 200 response body for any `/recognize` request. Also written to NOS `outbound/YYYY/MM/DD/HH/mm/<request_id>.json` (best-effort).
 
 ```json
 {
@@ -902,7 +902,7 @@ docs-proc-nebius/            ← new public repo, MIT license
 
 ### DynamoDB item (lity integration only — optional)
 
-Записывается только когда используется `nebius-adapter.js`. Endpoint ничего не знает об этой записи.
+Written only when `nebius-adapter.js` is used. The Endpoint has no knowledge of this record.
 
 | Attribute | Type | Description |
 |---|---|---|
@@ -1134,21 +1134,21 @@ curl -s -X POST http://localhost:8080/recognize \
 
 ### Nebius Object Storage Setup
 
-Выполняется один раз перед первым деплоем:
+Run once before the first deployment:
 
 ```bash
-# 1. Создать бакет
+# 1. Create bucket
 nebius object-storage bucket create \
   --name your-nos-bucket \
   --parent-id project-e00cnd42pr00608v7k0qjz
 
-# 2. Создать static key для SA
+# 2. Create static key for SA
 nebius iam service-account static-key create \
   --service-account-id <SA_ID> \
   --description "your-nos-bucket NOS access"
-# → outputs: key_id + secret (показывается ОДИН раз — сохранить немедленно)
+# → outputs: key_id + secret (shown ONCE — save immediately)
 
-# 3. Загрузить blueprints + catalog
+# 3. Upload blueprints + catalog
 aws s3 cp nebius-endpoint/blueprints/_catalog.json \
   s3://your-nos-bucket/blueprints/_catalog.json \
   --endpoint-url https://storage.eu-north1.nebius.cloud
@@ -1159,7 +1159,7 @@ for bp in default passport residence_permit_ltu_front; do
     --endpoint-url https://storage.eu-north1.nebius.cloud
 done
 
-# 4. Добавить в AWS SSM (после endpoint create)
+# 4. Add to AWS SSM (after endpoint create)
 aws ssm put-parameter --name /lity/nebius-s3-access-key --value "<key_id>"    --type SecureString --overwrite
 aws ssm put-parameter --name /lity/nebius-s3-secret-key --value "<secret>"    --type SecureString --overwrite
 aws ssm put-parameter --name /lity/nebius-s3-bucket      --value "your-nos-bucket" --type String  --overwrite
