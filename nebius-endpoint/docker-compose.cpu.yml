@@ -1,0 +1,15 @@
+version: "3.8"
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    ports:
+      - "8080:8080"
+    environment:
+      - GPU_ENABLED=0
+      - MOCK_VLLM=1
+      - AUTH_TOKEN=${AUTH_TOKEN:-change-me}
+    volumes:
+      - ./app:/app/app
+      - ./blueprints:/app/blueprints

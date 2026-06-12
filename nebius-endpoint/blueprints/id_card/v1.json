@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "id": "id_card",
+  "name": "National ID Card",
+  "version": 1,
+  "status": "active",
+  "description": "National identity card, any issuing country. Covers the front (photo) side. Matches MIDV-2020 ID card types (alb_id, esp_id, est_id, fin_id, svk_id, etc.).",
+  "extraction_prompt": "Extract all personal identification fields from this national identity card image. Return JSON with all fields including MRZ lines if visible.",
+  "document_parts": ["single"],
+  "sections": {
+    "DOCUMENT_METADATA": {
+      "document_type": {
+        "inferenceType": "explicit",
+        "instruction": "Type of document as printed (e.g., IDENTITY CARD, ID)",
+        "required": true
+      },
+      "document_number": {
+        "inferenceType": "explicit",
+        "instruction": "Card / document number exactly as printed on the document",
+        "required": true
+      },
+      "issuing_country": {
+        "inferenceType": "explicit",
+        "instruction": "ISO 3166-1 alpha-3 code of issuing country (e.g., ESP, EST, FIN, ALB, SVK)",
+        "required": true
+      }
+    },
+    "PERSONAL_INFO": {
+      "surname": {
+        "inferenceType": "explicit",
+        "instruction": "Surname / last name in uppercase as printed on the document",
+        "required": true
+      },
+      "given_names": {
+        "inferenceType": "explicit",
+        "instruction": "Given name(s) / first name(s) in uppercase as printed on the document",
+        "required": true
+      },
+      "sex": {
+        "inferenceType": "inferred",
+        "instruction": "Gender normalised to M or F from any printed form (M/V/MALE → M, F/N/FEMALE → F)",
+        "required": false
+      },
+      "nationality": {
+        "inferenceType": "explicit",
+        "instruction": "Nationality as printed or ISO 3166-1 alpha-3 code if abbreviated",
+        "required": false
+      },
+      "date_of_birth": {
+        "inferenceType": "inferred",
+        "instruction": "Date of birth converted to YYYY-MM-DD format from any printed date format",
+        "required": true
+      },
+      "personal_number": {
+        "inferenceType": "explicit",
+        "instruction": "Personal / national identification number if present, exactly as printed",
+        "required": false
+      }
+    },
+    "DOCUMENT_DETAILS": {
+      "date_of_expiry": {
+        "inferenceType": "inferred",
+        "instruction": "Expiry / valid until date converted to YYYY-MM-DD format",
+        "required": false
+      },
+      "date_of_issue": {
+        "inferenceType": "inferred",
+        "instruction": "Issue date converted to YYYY-MM-DD format if present on document",
+        "required": false
+      },
+      "mrz_line_1": {
+        "inferenceType": "explicit",
+        "instruction": "Machine Readable Zone line 1 verbatim (30 characters for TD1 format including < padding). If not visible return null.",
+        "required": false
+      },
+      "mrz_line_2": {
+        "inferenceType": "explicit",
+        "instruction": "Machine Readable Zone line 2 verbatim. If not visible return null.",
+        "required": false
+      },
+      "mrz_line_3": {
+        "inferenceType": "explicit",
+        "instruction": "Machine Readable Zone line 3 verbatim (TD1 ID cards have 3 MRZ lines). If not visible return null.",
+        "required": false
+      }
+    }
+  },
+  "created_at": "2026-06-12T00:00:00Z",
+  "updated_at": "2026-06-12T00:00:00Z"
+}
