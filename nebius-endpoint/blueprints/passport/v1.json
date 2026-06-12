@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "id": "passport",
+  "name": "Passport (international)",
+  "version": 1,
+  "status": "active",
+  "description": "International travel passport, any issuing country. Covers the biographical data page (page 2 / photo page).",
+  "extraction_prompt": "Extract all personal identification and travel document fields from this passport image. Return JSON with all fields including MRZ lines if visible.",
+  "document_parts": ["single"],
+  "sections": {
+    "DOCUMENT_METADATA": {
+      "document_type": {
+        "inferenceType": "explicit",
+        "instruction": "Type of document as printed (e.g., PASSPORT, P)",
+        "required": true
+      },
+      "document_number": {
+        "inferenceType": "explicit",
+        "instruction": "Passport number exactly as printed on the document",
+        "required": true
+      },
+      "issuing_country": {
+        "inferenceType": "explicit",
+        "instruction": "ISO 3166-1 alpha-3 code of issuing country (e.g., GBR, LTU, USA)",
+        "required": true
+      }
+    },
+    "PERSONAL_INFO": {
+      "surname": {
+        "inferenceType": "explicit",
+        "instruction": "Surname / last name in uppercase as printed on the document",
+        "required": true
+      },
+      "given_names": {
+        "inferenceType": "explicit",
+        "instruction": "Given name(s) / first name(s) in uppercase as printed on the document",
+        "required": true
+      },
+      "sex": {
+        "inferenceType": "inferred",
+        "instruction": "Gender normalised to M or F (e.g., M, F, MALE → M, FEMALE → F, VYR. → M, MOT. → F)",
+        "required": true
+      },
+      "nationality": {
+        "inferenceType": "explicit",
+        "instruction": "ISO 3166-1 alpha-3 code of holder's nationality (e.g., GBR, RUS, LTU)",
+        "required": true
+      },
+      "date_of_birth": {
+        "inferenceType": "inferred",
+        "instruction": "Date of birth converted to YYYY-MM-DD format from any printed date format",
+        "required": true
+      }
+    },
+    "DOCUMENT_DETAILS": {
+      "date_of_expiry": {
+        "inferenceType": "inferred",
+        "instruction": "Expiry / valid until date converted to YYYY-MM-DD format",
+        "required": true
+      },
+      "date_of_issue": {
+        "inferenceType": "inferred",
+        "instruction": "Issue / date of issue converted to YYYY-MM-DD format if present on document",
+        "required": false
+      },
+      "mrz_line_1": {
+        "inferenceType": "explicit",
+        "instruction": "Machine Readable Zone line 1 verbatim (44 characters including < padding). If not visible return null.",
+        "required": false
+      },
+      "mrz_line_2": {
+        "inferenceType": "explicit",
+        "instruction": "Machine Readable Zone line 2 verbatim (44 characters including < padding). If not visible return null.",
+        "required": false
+      }
+    }
+  },
+  "created_at": "2026-06-10T00:00:00Z",
+  "updated_at": "2026-06-10T00:00:00Z"
+}

@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "id": "default",
+  "name": "Default (catch-all)",
+  "version": 1,
+  "status": "active",
+  "description": "Generic catch-all blueprint. Extracts all visible structured information from any unknown document type. Used as fallback in mode=auto when no specific blueprint matches.",
+  "extraction_prompt": "Extract ALL visible structured information from this document. Return every field, number, date, name, identifier, address, and authority you can find. Be thorough — include every piece of text that appears to be a labelled field.",
+  "document_parts": ["single"],
+  "sections": {
+    "DOCUMENT_METADATA": {
+      "document_type": {
+        "inferenceType": "explicit",
+        "instruction": "Best guess at document type (e.g., PASSPORT, ID CARD, CERTIFICATE, PERMIT, CONTRACT)",
+        "required": false
+      },
+      "document_number": {
+        "inferenceType": "explicit",
+        "instruction": "Any document, reference, or serial number found on the document",
+        "required": false
+      },
+      "issuing_country": {
+        "inferenceType": "explicit",
+        "instruction": "ISO 3166-1 alpha-3 code of issuing country if identifiable (e.g., LTU, GBR, USA)",
+        "required": false
+      },
+      "issuing_authority": {
+        "inferenceType": "explicit",
+        "instruction": "Name of the issuing authority, ministry, or organisation as printed",
+        "required": false
+      },
+      "document_language": {
+        "inferenceType": "explicit",
+        "instruction": "ISO 639-1 code of the primary language of the document (e.g., lt, en, ru)",
+        "required": false
+      }
+    },
+    "PERSONAL_INFO": {
+      "full_name": {
+        "inferenceType": "explicit",
+        "instruction": "Full name as it appears on the document",
+        "required": false
+      },
+      "date_of_birth": {
+        "inferenceType": "inferred",
+        "instruction": "Date of birth in YYYY-MM-DD format if present",
+        "required": false
+      },
+      "nationality": {
+        "inferenceType": "explicit",
+        "instruction": "ISO 3166-1 alpha-3 code of nationality if present (e.g., RUS, GBR)",
+        "required": false
+      },
+      "sex": {
+        "inferenceType": "inferred",
+        "instruction": "Gender as M or F if present",
+        "required": false
+      }
+    },
+    "DOCUMENT_DETAILS": {
+      "date_of_issue": {
+        "inferenceType": "inferred",
+        "instruction": "Issue date in YYYY-MM-DD format if present",
+        "required": false
+      },
+      "date_of_expiry": {
+        "inferenceType": "inferred",
+        "instruction": "Expiry date in YYYY-MM-DD format if present",
+        "required": false
+      },
+      "other_fields": {
+        "inferenceType": "explicit",
+        "instruction": "Any other labelled fields not captured above — return as a JSON object with field names as keys and verbatim values as values",
+        "required": false
+      }
+    }
+  },
+  "created_at": "2026-06-10T00:00:00Z",
+  "updated_at": "2026-06-10T00:00:00Z"
+}

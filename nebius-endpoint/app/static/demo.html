@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>docs-proc-nebius — Document Recognition Demo</title>
+<style>
+  :root { --green:#16a34a; --yellow:#ca8a04; --red:#dc2626; --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --muted:#94a3b8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px; }
+  h1 { font-size:22px; margin:0 0 4px; } .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns:380px 1fr; gap:20px; }
+  @media (max-width:840px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--card); border-radius:10px; padding:16px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input, select, button { width:100%; padding:8px 10px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:var(--text); font-size:14px; }
+  button { background:#2563eb; border:none; cursor:pointer; font-weight:600; margin-top:14px; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .samples { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .samples img { width:64px; height:44px; object-fit:cover; border-radius:4px; cursor:pointer; border:2px solid transparent; }
+  .samples img.sel { border-color:#2563eb; }
+  .meta { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .badge { padding:4px 10px; border-radius:99px; font-size:12px; font-weight:700; }
+  .auto_classified { background:#052e16; color:#4ade80; } .review_required { background:#422006; color:#fbbf24; }
+  .escalate_to_operator { background:#450a0a; color:#f87171; } .neutral { background:#1e3a8a; color:#93c5fd; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid #334155; vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; }
+  .bar { position:relative; background:#334155; border-radius:4px; height:14px; min-width:90px; overflow:hidden; }
+  .bar > i { position:absolute; inset:0 auto 0 0; border-radius:4px; }
+  .bar > span { position:absolute; inset:0; font-size:10px; line-height:14px; text-align:center; color:#fff; }
+  .src { color:var(--muted); font-size:10px; }
+  pre { white-space:pre-wrap; font-size:12px; background:#0f172a; padding:10px; border-radius:6px; max-height:300px; overflow:auto; }
+  #preview { position:relative; margin-top:12px; }
+  #preview img, #preview canvas { max-width:100%; border-radius:6px; display:block; }
+  #preview canvas { position:absolute; inset:0; }
+  .err { color:#f87171; font-size:13px; margin-top:10px; white-space:pre-wrap; }
+  .pkt { border:1px solid #334155; border-radius:8px; padding:10px; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>docs-proc-nebius</h1>
+  <div class="sub">Blueprint-based document recognition on Nebius Serverless AI — Qwen2.5-VL + vLLM, logprob confidence, guided JSON</div>
+  <div class="grid">
+    <div class="card">
+      <label>Bearer token (never stored)</label>
+      <input id="token" type="password" placeholder="endpoint token">
+      <label>Document (image or PDF)</label>
+      <input id="file" type="file" accept="image/*,application/pdf">
+      <label>Sample documents (MIDV-2020 — synthetic, no real PII)</label>
+      <div class="samples" id="samples"><span class="src">no bundled samples</span></div>
+      <label>Mode</label>
+      <select id="mode">
+        <option value="auto" selected>auto — classify + extract</option>
+        <option value="blueprint">blueprint — fixed schema</option>
+        <option value="double_check">double_check — two-pass verify</option>
+        <option value="packet">packet — multi-page PDF splitting</option>
+        <option value="raw">raw — free-text description</option>
+      </select>
+      <label>Blueprint (for mode=blueprint / double_check)</label>
+      <select id="blueprint"><option value="">— load with token —</option></select>
+      <button id="go">Recognize</button>
+      <div class="err" id="err"></div>
+      <div id="preview"><img id="pimg" hidden><canvas id="pcanvas" hidden></canvas></div>
+    </div>
+    <div class="card" id="out"><span class="src">Result will appear here.</span></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const base = window.location.origin;          // Req 17.6 — nothing hardcoded
+let fileB64 = null, fileMime = null;
+
+function bandColor(c){ return c>=85 ? "var(--green)" : c>=50 ? "var(--yellow)" : "var(--red)"; }
+
+function confBar(c, src){
+  if (c === null || c === undefined) return "—";
+  return `<div class="bar"><i style="width:${c}%;background:${bandColor(c)}"></i><span>${c}</span></div>` +
+         (src ? `<div class="src">${src}</div>` : "");
+}
+
+function fieldsTable(fields){
+  if (!fields) return "";
+  const rows = Object.entries(fields).map(([k,f]) =>
+    `<tr><td>${k}</td><td>${f.value ?? "<i style='color:var(--muted)'>null</i>"}</td><td>${confBar(f.confidence, f.confidence_source)}</td></tr>`).join("");
+  return `<table><tr><th>Field</th><th>Value</th><th>Confidence</th></tr>${rows}</table>`;
+}
+
+function renderResult(r, ms){
+  const badge = x => x ? `<span class="badge ${x}">${x}</span>` : "";
+  let html = `<div class="meta">${badge(r.routing)}` +
+    (r.document_confidence != null ? `<span class="badge neutral">doc confidence ${r.document_confidence}</span>` : "") +
+    (r.blueprint_id ? `<span class="badge neutral">${r.blueprint_id}</span>` : "") +
+    `<span class="badge neutral">${ms} ms</span><span class="badge neutral">${r.mode}</span></div>`;
+  if (r.classification) html += `<div class="src" style="margin-bottom:8px">classified as: ${r.classification.document_type} (conf ${r.classification.confidence ?? "?"})</div>`;
+  if (r.documents) {            // packet mode
+    html += r.documents.map(d =>
+      `<div class="pkt"><div class="meta">${badge(d.routing)}<span class="badge neutral">pages ${d.pages.join(",")}</span>` +
+      `<span class="badge neutral">${d.blueprint_id ?? "unclassified"}</span></div>` +
+      (d.fields ? fieldsTable(d.fields) : "") + (d.raw_text ? `<pre>${d.raw_text}</pre>` : "") + `</div>`).join("");
+  }
+  html += fieldsTable(r.fields);
+  if (r.raw_text && !r.documents) html += `<pre>${r.raw_text}</pre>`;
+  $("out").innerHTML = html;
+  drawBoxes(r.fields);
+}
+
+function drawBoxes(fields){
+  const img = $("pimg"), cv = $("pcanvas");
+  cv.hidden = true;
+  if (!fields || img.hidden || !img.naturalWidth) return;
+  const boxes = Object.entries(fields).filter(([,f]) => f.bounding_box);
+  if (!boxes.length) return;
+  cv.width = img.clientWidth; cv.height = img.clientHeight; cv.hidden = false;
+  const ctx = cv.getContext("2d");
+  ctx.font = "10px sans-serif";
+  for (const [name, f] of boxes){
+    const b = f.bounding_box;
+    ctx.strokeStyle = bandColor(f.confidence ?? 0).replace("var(--green)","#16a34a").replace("var(--yellow)","#ca8a04").replace("var(--red)","#dc2626");
+    ctx.lineWidth = 2;
+    ctx.strokeRect(b.x*cv.width, b.y*cv.height, b.width*cv.width, b.height*cv.height);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fillText(name, b.x*cv.width + 2, b.y*cv.height - 2);
+  }
+}
+
+async function loadBlueprints(){
+  const t = $("token").value.trim();
+  if (!t) return;
+  try {
+    const resp = await fetch(`${base}/blueprints`, { headers: { Authorization: `Bearer ${t}` } });
+    if (!resp.ok) return;
+    const bps = await resp.json();
+    $("blueprint").innerHTML = bps.map(b => `<option value="${b.id}">${b.id} — ${b.name}</option>`).join("");
+  } catch {}
+}
+$("token").addEventListener("change", loadBlueprints);
+
+$("file").addEventListener("change", () => {
+  const f = $("file").files[0];
+  if (!f) return;
+  fileMime = f.type || "image/jpeg";
+  const rd = new FileReader();
+  rd.onload = () => {
+    fileB64 = rd.result.split(",")[1];
+    if (fileMime.startsWith("image/")) { $("pimg").src = rd.result; $("pimg").hidden = false; }
+    else { $("pimg").hidden = true; }
+    $("pcanvas").hidden = true;
+  };
+  rd.readAsDataURL(f);
+});
+
+// One-click samples (Req 17.5): static/samples/index.json lists bundled MIDV-2020 images
+fetch("static/samples/index.json").then(r => r.ok ? r.json() : null).then(list => {
+  if (!list || !list.length) return;
+  $("samples").innerHTML = list.map(s => `<img src="static/samples/${s}" title="${s}" data-s="${s}">`).join("");
+  $("samples").querySelectorAll("img").forEach(img => img.addEventListener("click", async () => {
+    $("samples").querySelectorAll("img").forEach(i => i.classList.remove("sel"));
+    img.classList.add("sel");
+    const blob = await (await fetch(img.src)).blob();
+    fileMime = blob.type || "image/jpeg";
+    const rd = new FileReader();
+    rd.onload = () => { fileB64 = rd.result.split(",")[1]; $("pimg").src = rd.result; $("pimg").hidden = false; $("pcanvas").hidden = true; };
+    rd.readAsDataURL(blob);
+  }));
+}).catch(()=>{});
+
+$("go").addEventListener("click", async () => {
+  $("err").textContent = "";
+  const t = $("token").value.trim();
+  if (!t) { $("err").textContent = "Token required."; return; }
+  if (!fileB64) { $("err").textContent = "Pick a file or sample."; return; }
+  const mode = $("mode").value;
+  const body = {
+    document: { type: "base64", value: fileB64, mime_type: fileMime },
+    mode,
+    options: { include_confidence: true, confidence_mode: "both" },
+  };
+  if (mode === "blueprint" || mode === "double_check") {
+    body.blueprint_id = $("blueprint").value;
+    if (!body.blueprint_id) { $("err").textContent = "Pick a blueprint (load list by entering token first)."; return; }
+  }
+  $("go").disabled = true;
+  const t0 = performance.now();
+  try {
+    const resp = await fetch(`${base}/recognize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+      body: JSON.stringify(body),
+    });
+    const ms = Math.round(performance.now() - t0);
+    const data = await resp.json();
+    if (!resp.ok) { $("err").textContent = `HTTP ${resp.status}: ${JSON.stringify(data)}`; }
+    else renderResult(data, ms);
+  } catch (e) { $("err").textContent = String(e); }
+  $("go").disabled = false;
+});
+</script>
+</body>
+</html>
