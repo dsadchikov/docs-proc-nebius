@@ -7,3 +7,7 @@ __pycache__/
 *.key
 .hypothesis/
 .pytest_cache/
+.DS_Store
+
+# Local-only specs (.kiro): contain internal references — kept out of the public repo
+.kiro/
