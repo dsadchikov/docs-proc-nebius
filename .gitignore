@@ -11,3 +11,6 @@ __pycache__/
 
 # Local-only specs (.kiro): contain internal references — kept out of the public repo
 .kiro/
+
+# Local-only Claude Code / kfc spec-workflow tooling (incl. .claude/specs -> .kiro symlink)
+.claude/
