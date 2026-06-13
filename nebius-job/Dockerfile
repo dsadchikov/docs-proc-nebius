@@ -1,18 +1,16 @@
 # nebius-job/Dockerfile
-# Batch document recognition job — runs against a Nebius Endpoint.
+# MIDV-2020 evaluation harness — runs against a Nebius Endpoint (Req 15).
 #
 # Required environment variables (pass via `docker run -e` or Kubernetes secrets):
 #
-#   MANIFEST_PATH        — Nebius Object Storage path to the Manifest JSON
-#                          e.g. s3://my-bucket/manifests/batch-001.json
+#   MANIFEST_PATH        — Nebius Object Storage path to the eval Manifest JSON
+#                          e.g. s3://my-bucket/eval/midv2020/manifest.json
 #
-#   OUTPUT_PATH          — Nebius Object Storage prefix for per-document output files
-#                          e.g. s3://my-bucket/results/batch-001/
+#   OUTPUT_PATH          — Nebius Object Storage prefix for results + report
+#                          e.g. s3://my-bucket/eval/
 #
 #   ENDPOINT_URL         — Full URL of the Nebius Inference Endpoint (no trailing slash)
 #                          e.g. https://<endpoint-id>.api.nebius.ai
-#
-#   MAX_RETRIES          — Max retry attempts per document on failure (default: 10)
 #
 #   REQUEST_TIMEOUT_S    — Per-request HTTP timeout in seconds (default: 60)
 #

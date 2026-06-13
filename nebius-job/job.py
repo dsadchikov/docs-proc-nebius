@@ -1,35 +1,45 @@
 """
-Nebius Inference Job — batch document recognition pipeline.
+Nebius Inference Job — MIDV-2020 evaluation harness.
+
+This container runs the recognition pipeline over a labeled MIDV-2020 subset,
+calls the Endpoint for each document, scores the result against ground truth,
+and writes per-document results plus a summary report to Nebius Object Storage
+(Requirement 15).
+
+Batch re-recognition (the former JOB_MODE=batch path) is out of scope for the
+current submission and has been removed — see Requirement 8 (de-scoped).
 
 Environment variables:
-  MANIFEST_PATH       — Nebius Object Storage path to the Manifest JSON
-                        (e.g. s3://my-bucket/manifests/test.json)
-  OUTPUT_PATH         — Nebius Object Storage prefix for output files
-                        (e.g. s3://my-bucket/results/test/)
+  MANIFEST_PATH       — Nebius Object Storage path to the eval Manifest JSON
+                        (e.g. s3://my-bucket/eval/midv2020/manifest.json)
+  OUTPUT_PATH         — Nebius Object Storage prefix for results + report
+                        (e.g. s3://my-bucket/eval/)
   ENDPOINT_URL        — Full URL of the Nebius Endpoint
                         (e.g. https://...nebius.ai)
   ENDPOINT_TOKEN      — Bearer token for Authorization header on /recognize calls
-  MAX_RETRIES         — Max retry attempts per document (default: 10)
   REQUEST_TIMEOUT_S   — Per-request timeout in seconds (default: 60)
+  GPU_HOURLY_USD      — H100 SXM hourly price for the cost estimate (default: 2.80)
   S3_ENDPOINT         — Nebius Object Storage S3-compatible endpoint URL
                         (default: https://storage.eu-north1.nebius.cloud)
   S3_BUCKET           — Nebius Object Storage bucket name (set via env)
   S3_ACCESS_KEY       — Nebius Object Storage static key ID
   S3_SECRET_KEY       — Nebius Object Storage static secret key
 
-Manifest format (JSON):
+Eval manifest format (JSON):
   {
     "documents": [
       {
-        "document_id": "uuid-1",
-        "blueprint_id": "passport",
-        "nos_key": "inbound/2026/06/09/19/32/uuid.jpg",
-        "mime_type": "image/jpeg"
+        "document_id": "esp_id_00",
+        "doc_type": "esp_id",
+        "blueprint_id": "id_card",
+        "nos_key": "eval/midv2020/images/esp_id/00.jpg",
+        "mime_type": "image/jpeg",
+        "ground_truth": { "document_number": "...", "surname": "...", ... }
       }
     ]
   }
 
-Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8
+Requirements: 15.1, 15.4, 15.5
 """
 
 import json
@@ -50,11 +60,8 @@ MANIFEST_PATH = os.environ.get("MANIFEST_PATH", "")
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "")
 ENDPOINT_URL = os.environ.get("ENDPOINT_URL", "").rstrip("/")
 ENDPOINT_TOKEN = os.environ.get("ENDPOINT_TOKEN", "")
-MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "10"))
 REQUEST_TIMEOUT_S = float(os.environ.get("REQUEST_TIMEOUT_S", "60"))
 
-# JOB_MODE: "batch" (default, Req 8) | "eval" (MIDV-2020 benchmark, Req 15)
-JOB_MODE = os.environ.get("JOB_MODE", "batch")
 GPU_HOURLY_USD = float(os.environ.get("GPU_HOURLY_USD", "2.80"))
 
 # Nebius Object Storage (NOS) configuration
@@ -100,22 +107,10 @@ def _parse_s3_path(s3_path):
 
 def _read_manifest(s3_client, manifest_path):
     """
-    Fetch and parse the Manifest JSON from Nebius Object Storage.
-
-    Expected manifest format:
-      {
-        "documents": [
-          {
-            "document_id": "<uuid>",
-            "blueprint_id": "<id>",
-            "nos_key": "inbound/YYYY/MM/DD/HH/mm/<uuid>.<ext>",
-            "mime_type": "<mime_type>"
-          }
-        ]
-      }
+    Fetch and parse the eval Manifest JSON from Nebius Object Storage.
 
     Returns the parsed dict on success.
-    Logs to stdout and calls sys.exit(1) on any failure (Req 8.2).
+    Logs to stdout and calls sys.exit(1) on any failure.
     """
     try:
         bucket, key = _parse_s3_path(manifest_path)
@@ -133,7 +128,7 @@ def _read_manifest(s3_client, manifest_path):
 def _write_result(s3_client, output_path, document_id, record):
     """
     Write a per-document result JSON to OUTPUT_PATH/<document_id>.json
-    in Nebius Object Storage (Req 8.3).
+    in Nebius Object Storage.
     """
     prefix = output_path.rstrip("/")
     bucket, key_prefix = _parse_s3_path(prefix)
@@ -147,6 +142,19 @@ def _write_result(s3_client, output_path, document_id, record):
         Body=json.dumps(record, ensure_ascii=False).encode("utf-8"),
         ContentType="application/json",
     )
+
+
+def _write_nos_json(s3_client, bucket, key, payload):
+    """Best-effort JSON write to NOS — logs but never raises."""
+    try:
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({"event": "nos_write_error", "key": key, "error": str(exc)}), flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +177,7 @@ def _call_endpoint(http_client, endpoint_url, doc, timeout_s):
     POST /recognize to the Endpoint for a single document entry.
 
     Uses document.type: "nebius_object" with the nos_key from the manifest
-    entry (Req 8.4). Sends Authorization: Bearer header if ENDPOINT_TOKEN
-    is configured.
+    entry. Sends Authorization: Bearer header if ENDPOINT_TOKEN is configured.
 
     Returns (response_or_none, status_code_or_none, elapsed_ms, exception_or_none).
     """
@@ -198,121 +205,8 @@ def _call_endpoint(http_client, endpoint_url, doc, timeout_s):
 
 
 # ---------------------------------------------------------------------------
-# Per-document processing
+# Evaluation run — Req 15
 # ---------------------------------------------------------------------------
-
-def _process_document(s3_client, http_client, doc, endpoint_url, max_retries, timeout_s):
-    """
-    Attempt to recognize a single document, with retries and exponential backoff.
-
-    Logs each attempt as structured JSON per Req 8.3.
-    Writes success or error record to Object Storage per Req 8.3 / 8.5.
-    Always returns without raising.
-    """
-    document_id = doc["document_id"]
-    doc_start = time.monotonic()
-
-    last_status = None
-    last_error_msg = None
-    attempts = 0
-
-    for attempt in range(max_retries + 1):
-        resp, status_code, elapsed_ms, exc = _call_endpoint(
-            http_client, endpoint_url, doc, timeout_s
-        )
-
-        if exc is not None:
-            # Network-level failure
-            last_status = None
-            last_error_msg = str(exc)
-            log_entry = {
-                "document_id": document_id,
-                "endpoint_http_status": None,
-                "elapsed_ms": elapsed_ms,
-            }
-            if attempt > 0:
-                log_entry["retry_count"] = attempt  # Req 8.3
-            print(json.dumps(log_entry), flush=True)
-        else:
-            last_status = status_code
-            log_entry = {
-                "document_id": document_id,
-                "endpoint_http_status": status_code,
-                "elapsed_ms": elapsed_ms,
-            }
-            if attempt > 0:
-                log_entry["retry_count"] = attempt  # Req 8.3
-            print(json.dumps(log_entry), flush=True)
-
-            if status_code == 200:
-                # Success — write result record
-                attempts = attempt + 1
-                total_elapsed_ms = int((time.monotonic() - doc_start) * 1000)
-                try:
-                    recognition_result = resp.json()
-                except Exception:  # noqa: BLE001
-                    recognition_result = {}
-
-                record = {
-                    "document_id": document_id,
-                    "status": "success",
-                    "recognition_result": recognition_result,
-                    "elapsed_ms": total_elapsed_ms,
-                    "attempts": attempts,
-                }
-                _write_result(s3_client, OUTPUT_PATH, document_id, record)
-                return True  # success
-
-            last_error_msg = f"HTTP {status_code}"
-
-        # Not a 200 — decide whether to retry
-        if attempt < max_retries:
-            sleep_seconds = 2 ** attempt  # exponential backoff
-            # Cap at 60s to avoid very long waits on last retries
-            sleep_seconds = min(sleep_seconds, 60)
-            time.sleep(sleep_seconds)
-        else:
-            # Exhausted all retries
-            break
-
-        attempts = attempt + 1
-
-    # Failure after all retries (Req 8.5)
-    attempts = max_retries + 1
-    total_elapsed_ms = int((time.monotonic() - doc_start) * 1000)
-
-    if last_status is not None:
-        error_msg = f"HTTP {last_status} after {max_retries} retries"
-    else:
-        error_msg = f"{last_error_msg} after {max_retries} retries"
-
-    record = {
-        "document_id": document_id,
-        "status": "error",
-        "error": error_msg,
-        "attempts": attempts,
-        "elapsed_ms": total_elapsed_ms,
-    }
-    _write_result(s3_client, OUTPUT_PATH, document_id, record)
-    return False  # failure
-
-
-# ---------------------------------------------------------------------------
-# Evaluation mode (JOB_MODE=eval) — Req 15
-# ---------------------------------------------------------------------------
-
-def _write_nos_json(s3_client, bucket, key, payload):
-    """Best-effort JSON write to NOS — logs but never raises."""
-    try:
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            ContentType="application/json",
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"event": "nos_write_error", "key": key, "error": str(exc)}), flush=True)
-
 
 def main_eval():
     """Evaluation run: recognize each labeled document, score against ground
@@ -374,69 +268,5 @@ def main_eval():
     sys.exit(0)
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
-def main():
-    job_start = time.monotonic()
-
-    s3_client = _make_s3_client()
-
-    # Req 8.1 / 8.2 — read manifest; exits 1 on failure
-    manifest = _read_manifest(s3_client, MANIFEST_PATH)
-    documents = manifest.get("documents", [])
-
-    # Req 8.7 — N=0: exit 0 without calling Endpoint
-    if len(documents) == 0:
-        elapsed_seconds = round(time.monotonic() - job_start, 3)
-        print(
-            json.dumps(
-                {"total": 0, "success": 0, "failure": 0, "elapsed_seconds": elapsed_seconds}
-            ),
-            flush=True,
-        )
-        sys.exit(0)
-
-    success_count = 0
-    failure_count = 0
-
-    # Req 8.3 / 8.4 / 8.5 — process each document in manifest order
-    with httpx.Client() as http_client:
-        for doc in documents:
-            ok = _process_document(
-                s3_client,
-                http_client,
-                doc,
-                ENDPOINT_URL,
-                MAX_RETRIES,
-                REQUEST_TIMEOUT_S,
-            )
-            if ok:
-                success_count += 1
-            else:
-                failure_count += 1
-
-    # Req 8.6 — log summary and exit 0
-    elapsed_seconds = round(time.monotonic() - job_start, 3)
-    summary = {
-        "total": len(documents),
-        "success": success_count,
-        "failure": failure_count,
-        "elapsed_seconds": elapsed_seconds,
-    }
-    print(json.dumps(summary), flush=True)
-
-    # Req 12.3 / task 16.2 — best-effort job summary to NOS logs/
-    job_id = time.strftime("%Y%m%d_%H%M%S")
-    log_key = time.strftime("logs/%Y/%m/%d/%H/%M/") + f"job_{job_id}.json"
-    _write_nos_json(s3_client, S3_BUCKET, log_key, {"job_id": job_id, **summary})
-
-    sys.exit(0)
-
-
 if __name__ == "__main__":
-    if JOB_MODE == "eval":
-        main_eval()
-    else:
-        main()
+    main_eval()
