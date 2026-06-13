@@ -375,8 +375,8 @@ docker run --rm \
   -e S3_BUCKET=<YOUR_NOS_BUCKET> \
   -e S3_ACCESS_KEY=<KEY> \
   -e S3_SECRET_KEY=<SECRET> \
-  -e JOB_MODE=eval \
-  -e MANIFEST_KEY=eval/midv2020/manifest.json \
+  -e MANIFEST_PATH=s3://<YOUR_NOS_BUCKET>/eval/midv2020/manifest.json \
+  -e OUTPUT_PATH=s3://<YOUR_NOS_BUCKET>/eval/ \
   nebius-job:latest
 ```
 
@@ -394,7 +394,7 @@ Measured on a single H100 SXM endpoint, 60 documents, `mode=blueprint`:
 | Latency p95 | 2.34 s/doc |
 | Total for 60 docs | 124 s |
 | GPU cost (H100 SXM @ $2.80/hr) | ~$0.001/doc |
-| **Batch of 1 000 docs** | **~$1.00** |
+| **1 000 docs (projected)** | **~$1.00** |
 
 Nebius Serverless GPU Endpoints are billed per second of compute — no idle charges between requests.
 
@@ -455,7 +455,7 @@ nebius-endpoint/
 └── smoke_test.sh            # 33-test end-to-end smoke suite
 
 nebius-job/
-├── job.py                   # Batch job: eval mode + future processing modes
+├── job.py                   # MIDV-2020 evaluation harness (calls the Endpoint)
 ├── eval_metrics.py          # exact_match, levenshtein_sim, calibration, summarize
 ├── scripts/
 │   ├── prepare_midv2020.sh  # Download MIDV-2020 subset, upload to NOS
