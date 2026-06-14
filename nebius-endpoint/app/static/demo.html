@@ -45,6 +45,8 @@
   <div class="sub">Blueprint-based document recognition on Nebius Serverless AI — Qwen2.5-VL + vLLM, logprob confidence, guided JSON</div>
   <div class="grid">
     <div class="card">
+      <label>Endpoint URL</label>
+      <input id="apiurl" type="text" placeholder="http://IP:8080">
       <label>Bearer token (never stored)</label>
       <input id="token" type="password" placeholder="endpoint token">
       <label>Document (image or PDF)</label>
@@ -70,7 +72,9 @@
 </div>
 <script>
 const $ = id => document.getElementById(id);
-const base = window.location.origin;          // Req 17.6 — nothing hardcoded
+const defaultBase = window.location.origin.startsWith('file') ? '' : window.location.origin;
+$('apiurl').value = defaultBase;
+const getBase = () => ($('apiurl').value || '').replace(/\/$/, '');
 let fileB64 = null, fileMime = null;
 
 function bandColor(c){ return c>=85 ? "var(--green)" : c>=50 ? "var(--yellow)" : "var(--red)"; }
@@ -130,7 +134,7 @@ async function loadBlueprints(){
   const t = $("token").value.trim();
   if (!t) return;
   try {
-    const resp = await fetch(`${base}/blueprints`, { headers: { Authorization: `Bearer ${t}` } });
+    const resp = await fetch(`${getBase()}/blueprints`, { headers: { Authorization: `Bearer ${t}` } });
     if (!resp.ok) return;
     const bps = await resp.json();
     $("blueprint").innerHTML = bps.map(b => `<option value="${b.id}">${b.id} — ${b.name}</option>`).join("");
@@ -185,7 +189,7 @@ $("go").addEventListener("click", async () => {
   $("go").disabled = true;
   const t0 = performance.now();
   try {
-    const resp = await fetch(`${base}/recognize`, {
+    const resp = await fetch(`${getBase()}/recognize`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
       body: JSON.stringify(body),

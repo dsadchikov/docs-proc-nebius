@@ -3,10 +3,13 @@ __pycache__/
 *.pyo
 .env
 .env.local
+.secrets.env
 *.pem
 *.key
 .hypothesis/
 .pytest_cache/
+.venv/
+venv/
 .DS_Store
 
 # Local-only specs (.kiro): contain internal references — kept out of the public repo

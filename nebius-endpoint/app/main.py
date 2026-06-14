@@ -12,8 +12,9 @@ from botocore.config import Config as BotoConfig
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Query
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Config
 from app.auth import verify_token
@@ -41,6 +42,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Nebius Document Recognition", version="2.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 (_STATIC_DIR / "samples").mkdir(parents=True, exist_ok=True)
@@ -68,6 +75,32 @@ async def health(request: Request):
         "status": "healthy" if vllm_ok else "degraded", "vllm": "up" if vllm_ok else "down",
         "fastapi": "up", "gpu_enabled": Config.GPU_ENABLED, "mock_mode": Config.MOCK_VLLM,
         "model": Config.VLLM_MODEL_NAME, "uptime_seconds": round(uptime, 1), "blueprints_loaded": bp_count})
+
+
+@app.api_route("/v1/{path:path}", methods=["GET", "POST"])
+async def vllm_passthrough(path: str, request: Request):
+    """Transparent proxy to vLLM's OpenAI-compatible API.
+
+    Replaces the nginx `location /v1/` passthrough now that uvicorn serves
+    port 8080 directly. Preserves "direct model access" (README) and smoke
+    test T6 (GET /v1/models). Auth is gated at the Nebius ingress, same as the
+    old nginx route (no app-level token check here).
+    """
+    client = request.app.state.http_client
+    body = await request.body()
+    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() == "content-type"}
+    upstream = await client.request(
+        request.method,
+        f"/v1/{path}",
+        content=body,
+        headers=fwd_headers,
+        params=request.query_params,
+    )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+    )
 
 
 @app.get("/inbound/presign", response_model=PresignResponse)
