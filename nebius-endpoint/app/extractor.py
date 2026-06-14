@@ -118,6 +118,21 @@ def logprob_confidence(value, logprobs_content, field_name: str = "") -> tuple:
             start = full.find(needle, anchor if anchor >= 0 else 0)
             if start < 0:
                 start = full.find(needle)
+            if start < 0:
+                # The parsed value is JSON-unescaped, but the raw token text keeps
+                # escapes (\n, \", \uXXXX in multi-line/address/unicode fields).
+                # Retry with the escaped form so these fields get true logprob
+                # confidence instead of falling back to response_mean (Req 13.3).
+                try:
+                    esc = json.dumps(needle)[1:-1]
+                except Exception:
+                    esc = needle
+                if esc != needle:
+                    start = full.find(esc, anchor if anchor >= 0 else 0)
+                    if start < 0:
+                        start = full.find(esc)
+                    if start >= 0:
+                        needle = esc
             if start >= 0:
                 end = start + len(needle)
                 pos = 0
