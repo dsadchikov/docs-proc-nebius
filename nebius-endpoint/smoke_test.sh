@@ -58,12 +58,14 @@ else
   fail "T1: GET /health → $HTTP (expected 200)"; dump /tmp/sm_health.json
 fi
 
-# T2: GET /health without token → 401/403
-HTTP=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
+# T2: protected route without token → 401/403 (/health & /demo are intentionally public).
+# Uses GET /blueprints which carries app-level verify_token. Valid under both deploy
+# models: --auth token (ingress 401) and --auth none + AUTH_TOKEN (app 401).
+HTTP=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/blueprints")
 if [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ]; then
-  pass "T2: GET /health no token → $HTTP (auth enforced)"
+  pass "T2: GET /blueprints no token → $HTTP (auth enforced)"
 else
-  fail "T2: GET /health no token → $HTTP (expected 401/403)"
+  fail "T2: GET /blueprints no token → $HTTP (expected 401/403)"
 fi
 
 # T3: All 8 required fields present in /health
