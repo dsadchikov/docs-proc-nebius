@@ -20,7 +20,14 @@ snapshot_download( \
     ignore_patterns=['*.msgpack','*.h5','flax_model*','tf_model*'] \
 )"
 
-COPY nginx.conf /etc/nginx/nginx.conf
+# Runtime env (placed BELOW the cached model layer so it doesn't trigger a
+# 16GB re-download): unbuffered stdout for live logs; offline HF so vLLM never
+# phones the hub at runtime (the model is already baked into the image — the
+# suspected source of the idle-GPU startup hang).
+ENV PYTHONUNBUFFERED=1 \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
 COPY app/ /app/app/
 COPY blueprints/ /app/blueprints/
 COPY start.sh /app/start.sh
