@@ -78,13 +78,13 @@ async def health(request: Request):
 
 
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
-async def vllm_passthrough(path: str, request: Request):
+async def vllm_passthrough(path: str, request: Request, _=Depends(verify_token)):
     """Transparent proxy to vLLM's OpenAI-compatible API.
 
     Replaces the nginx `location /v1/` passthrough now that uvicorn serves
     port 8080 directly. Preserves "direct model access" (README) and smoke
-    test T6 (GET /v1/models). Auth is gated at the Nebius ingress, same as the
-    old nginx route (no app-level token check here).
+    test T6 (GET /v1/models). Protected by app-level verify_token so the model
+    is not directly reachable when deployed with `--auth none` at the ingress.
     """
     client = request.app.state.http_client
     body = await request.body()
@@ -104,7 +104,7 @@ async def vllm_passthrough(path: str, request: Request):
 
 
 @app.get("/inbound/presign", response_model=PresignResponse)
-async def inbound_presign(filename: str = Query(..., description="Original filename, used to detect extension")):
+async def inbound_presign(filename: str = Query(..., description="Original filename, used to detect extension"), _=Depends(verify_token)):
     """Generate a NOS presigned PUT URL for direct client upload (standalone Variant B).
 
     Validates: Requirements 1.2
