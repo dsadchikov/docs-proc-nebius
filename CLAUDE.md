@@ -176,7 +176,15 @@ bash nebius-endpoint/smoke_test.sh
 ### Backlog / known issues (после деплоя v25)
 
 - **BUG-1** — `mode=auto` на нераспознанном изображении: lookup идёт по `null` вместо `"default"` (`raw_text: "Blueprint not found: default"` в T23; тест проходит, routing=escalate). Не блокер.
-- **Браузерный демо за токен-гейтом НЕ работает** — Nebius `--auth token` ингресс (`nginx/1.31.1`) требует Bearer на всех путях: `GET /demo` → 401 (токен в URL-навигации не подставить), preflight `OPTIONS` → 401. Решение для контеста: отдельный демо-endpoint с `--auth none`, либо демонстрация через curl/CLI. **Решить до видео-walkthrough (задача 39).**
+- **Браузерный демо за токен-гейтом** — Nebius `--auth token` ингресс (`nginx/1.31.1`) требует Bearer на всех путях: `GET /demo` → 401, preflight `OPTIONS` → 401. **РЕШЕНО в v26:** деплой с `--auth none` (ингресс открыт) + app-level `AUTH_TOKEN` env. Тогда `/demo`, `/static`, `/health` публичны (страница грузится в браузере), а защищённые роуты проверяет наш `verify_token`. Судья открывает `/demo`, вписывает токен → запросы same-origin с `Authorization`.
+
+### Аудит 2026-06-14 — статус фиксов (v26)
+- ✅ **App-level auth** — `verify_token` добавлен на `/inbound/presign` и `/v1/{path}` (были открыты). Публичны только `/health`, `/demo`, `/static`. Деплой-модель: `--auth none` + `--env AUTH_TOKEN=<token>`.
+- ✅ **Демо: авто-blueprint из картинки** (mandatory) — кнопка «Generate blueprint» в demo.html: `POST /blueprints/generate` → `PUT` (активация draft, иначе recognize=422, т.к. `create_draft` кладёт только в `_raw_cache`) → select → recognize.
+- ✅ **Демо: other_fields** — expandable JSON viewer (`renderValue`).
+- ✅ **smoke_test.sh** — хардкода IP/token нет (уже на env); T2 переключён на защищённый роут `/blueprints`.
+- ⚠️ **confidence response_mean (#6)** — добавлен fallback на экранированную форму value в `logprob_confidence` (чинит спецсимвольные/многострочные поля). **Plain-поля требуют live-проверки** (захватить реальный `/recognize` с logprobs). Связано с [BLOCKED-on-data].
+- ⏸️ **[BLOCKED on data]** sample MIDV-2020 картинки в `app/static/samples/` (+ `index.json`, JS уже готов) и README accuracy-таблица (Req 15.6, нужны результаты eval job `20260612_214444_acc95d`). Юзер донесёт файлы/данные.
 - **`--ssh-key` / SSH в VM** — ключ не прокидывается, SSH в VM endpoint'а недоступен; диагностика только через `nebius ai endpoint logs` / serial console. Флаг убран из деплой-команды.
 
 ### Лог инцидента деплоя (2026-06-13/14) — три наслоённых дефекта
