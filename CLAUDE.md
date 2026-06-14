@@ -122,13 +122,20 @@ bash nebius-endpoint/smoke_test.sh
 
 | Field | Value |
 |---|---|
-| ID | `aiendpoint-e00m7v3n0make6t394` |
-| Name | `lity-doc-recognition-v25` |
-| Image tag | `v25` |
-| State | **RUNNING** (2026-06-14) |
-| Last known IP | `89.169.102.181:8080` |
-| Last smoke | 33/33 PASS (2026-06-14) |
+| Last deploy | `lity-doc-recognition-v27` (демо: образ v26-кода + 14 samples) |
+| Deploy-модель | `--auth none` + `--env AUTH_TOKEN=<token>` (браузерный демо + app-auth) |
+| State | **STOPPED** после сессии 2026-06-14 (cost). Передеплой по runbook v27. |
 | Project | `project-e00g5my4en10vmy2fbmhs9` (владелец subnet) |
+| Verified | smoke 33/33; `/demo` (samples + Generate blueprint) работает в браузере |
+
+**Восстановить `AUTH_TOKEN` действующего endpoint'а** (env хранятся открыто в спеке):
+```bash
+nebius ai endpoint get <ID> --format json | python3 -c "
+import sys, json
+for e in json.load(sys.stdin)['spec'].get('environment_variables', []):
+    if e['name'] == 'AUTH_TOKEN': print(e['value'])"
+```
+(то же видно для `S3_*` — открыто всем с доступом к проекту; для контеста ок.)
 
 ### Архитектура контейнера (с v25 — минимальная)
 
