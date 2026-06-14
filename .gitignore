@@ -17,3 +17,6 @@ venv/
 
 # Local-only Claude Code / kfc spec-workflow tooling (incl. .claude/specs -> .kiro symlink)
 .claude/
+
+# Source MIDV-2020 delivery (curated subset lives in app/static/samples/)
+/images/
