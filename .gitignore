@@ -11,6 +11,8 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+INTERNAL-RUNBOOK.md
+internal-docs/
 
 # Local-only specs (.kiro): contain internal references — kept out of the public repo
 .kiro/
