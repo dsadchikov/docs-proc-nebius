@@ -35,6 +35,7 @@
   #preview { position:relative; margin-top:12px; }
   #preview img, #preview canvas { max-width:100%; border-radius:6px; display:block; }
   #preview canvas { position:absolute; inset:0; }
+  #preview iframe { width:100%; height:480px; border:0; border-radius:6px; display:block; }
   .err { color:#f87171; font-size:13px; margin-top:10px; white-space:pre-wrap; }
   .pkt { border:1px solid #334155; border-radius:8px; padding:10px; margin-bottom:10px; }
 </style>
@@ -67,7 +68,7 @@
       <button id="gen" style="background:#7c3aed">Generate blueprint from document</button>
       <div class="src" style="margin-top:6px">Generate builds a draft blueprint from the uploaded document (2 VLM passes, ~30s), selects it, and switches to blueprint mode.</div>
       <div class="err" id="err"></div>
-      <div id="preview"><img id="pimg" hidden><canvas id="pcanvas" hidden></canvas></div>
+      <div id="preview"><img id="pimg" hidden><canvas id="pcanvas" hidden></canvas><iframe id="ppdf" hidden title="PDF preview"></iframe></div>
     </div>
     <div class="card" id="out"><span class="src">Result will appear here.</span></div>
   </div>
@@ -173,8 +174,13 @@ $("file").addEventListener("change", () => {
   const rd = new FileReader();
   rd.onload = () => {
     fileB64 = rd.result.split(",")[1];
-    if (fileMime.startsWith("image/")) { $("pimg").src = rd.result; $("pimg").hidden = false; }
-    else { $("pimg").hidden = true; }
+    if (fileMime.startsWith("image/")) {
+      $("pimg").src = rd.result; $("pimg").hidden = false;
+      $("ppdf").hidden = true; $("ppdf").removeAttribute("src");
+    } else {
+      $("ppdf").src = rd.result; $("ppdf").hidden = false;
+      $("pimg").hidden = true; $("pimg").removeAttribute("src");
+    }
     $("pcanvas").hidden = true;
   };
   rd.readAsDataURL(f);
@@ -190,7 +196,7 @@ fetch("static/samples/index.json").then(r => r.ok ? r.json() : null).then(list =
     const blob = await (await fetch(img.src)).blob();
     fileMime = blob.type || "image/jpeg";
     const rd = new FileReader();
-    rd.onload = () => { fileB64 = rd.result.split(",")[1]; $("pimg").src = rd.result; $("pimg").hidden = false; $("pcanvas").hidden = true; };
+    rd.onload = () => { fileB64 = rd.result.split(",")[1]; $("pimg").src = rd.result; $("pimg").hidden = false; $("ppdf").hidden = true; $("ppdf").removeAttribute("src"); $("pcanvas").hidden = true; };
     rd.readAsDataURL(blob);
   }));
 }).catch(()=>{});
