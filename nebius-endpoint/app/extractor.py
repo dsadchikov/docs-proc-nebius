@@ -4,6 +4,7 @@ import re
 import logging
 import base64
 from typing import NamedTuple, Optional
+from urllib.parse import urlparse
 
 import httpx
 import boto3
@@ -178,6 +179,31 @@ async def extract_document(http_client, request: RecognizeRequest, blueprint: Op
         return await extract_with_blueprint(http_client, image_content, document_part, blueprint, request.options)
 
 
+def _validate_fetch_url(url: str) -> None:
+    """SSRF guard for document.type=presigned_url.
+
+    Only https URLs whose host is in the allowlist may be fetched (by us) or
+    handed to vLLM as an image_url. The allowlist defaults to the configured
+    NOS endpoint host, so legitimate presigned NOS URLs pass while arbitrary
+    internal/metadata URLs are rejected.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise HTTPException(status_code=400, detail="presigned_url must use https")
+    allow = list(Config.FETCH_URL_ALLOWLIST)
+    if not allow:
+        nos_host = urlparse(Config.S3_ENDPOINT).hostname
+        if nos_host:
+            allow = [nos_host]
+    host = parsed.hostname or ""
+    # Match exact host or a subdomain of an allowed host.
+    if not any(host == a or host.endswith("." + a) for a in allow):
+        raise HTTPException(
+            status_code=400,
+            detail=f"presigned_url host '{host}' is not allowed",
+        )
+
+
 async def _fetch_document_bytes(document: DocumentInput) -> bytes:
     """Resolve any document.type to raw bytes."""
     if document.type == "nebius_object":
@@ -191,6 +217,7 @@ async def _fetch_document_bytes(document: DocumentInput) -> bytes:
             logger.error("Failed to fetch nebius_object %s: %s", document.value, exc)
             raise HTTPException(status_code=503, detail=f"Failed to fetch object from NOS: {exc}") from exc
     if document.type == "presigned_url":
+        _validate_fetch_url(document.value)
         async with httpx.AsyncClient(timeout=Config.FETCH_TIMEOUT) as client:
             resp = await client.get(document.value)
             resp.raise_for_status()
@@ -215,6 +242,11 @@ async def preprocess_document(document: DocumentInput) -> tuple:
             pdf_bytes = await _fetch_document_bytes(document)
 
         total_pages = get_pdf_page_count(pdf_bytes)
+        if total_pages > Config.PDF_MAX_PAGES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"PDF has {total_pages} pages, exceeds PDF_MAX_PAGES={Config.PDF_MAX_PAGES}",
+            )
         if page > total_pages:
             raise ValueError(f"Page {page} requested but PDF has only {total_pages} pages")
         img_b64 = pdf_to_single_page_image(pdf_bytes, page=page)
@@ -223,6 +255,7 @@ async def preprocess_document(document: DocumentInput) -> tuple:
 
     # --- Image / other content ---
     elif document.type == "presigned_url":
+        _validate_fetch_url(document.value)
         image_content = {"type": "image_url", "image_url": {"url": document.value}}
         document_part = "single"
 

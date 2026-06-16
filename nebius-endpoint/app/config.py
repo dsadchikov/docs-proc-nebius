@@ -18,3 +18,18 @@ class Config:
     PDF_MAX_PAGES = int(os.getenv("PDF_MAX_PAGES", "50"))
     VLLM_TIMEOUT = int(os.getenv("VLLM_TIMEOUT", "120"))
     FETCH_TIMEOUT = int(os.getenv("FETCH_TIMEOUT", "30"))
+
+    # --- Well-Architected hardening (security / reliability / observability) ---
+    # Per-request deadline (Req 1.6: /recognize over budget -> HTTP 504).
+    REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "30"))
+    # Packet mode legitimately runs longer (one extraction per logical document).
+    PACKET_TIMEOUT = int(os.getenv("PACKET_TIMEOUT", "180"))
+    # Max inbound request body (bytes). Guards base64 memory-DoS. Default 25 MiB.
+    MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+    # CORS origins (comma-separated). Empty = no cross-origin (same-origin /demo still works).
+    CORS_ALLOW_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()]
+    # SSRF allowlist for document.type=presigned_url hosts (comma-separated).
+    # Empty -> derived from the S3_ENDPOINT host at use time.
+    FETCH_URL_ALLOWLIST = [h.strip() for h in os.getenv("FETCH_URL_ALLOWLIST", "").split(",") if h.strip()]
+    # Expose /metrics (Prometheus text exposition) for Nebius Managed Prometheus.
+    METRICS_ENABLED = os.getenv("METRICS_ENABLED", "1").lower() not in ("0", "false", "no")

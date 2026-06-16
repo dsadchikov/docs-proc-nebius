@@ -13,16 +13,25 @@ fi
 # warms up in parallel and its status is reported by /health. This decouples
 # port-readiness from model-load — the cause of the v24 STARTING/code=13 hang.
 if [ "${GPU_ENABLED:-1}" != "0" ] && [ "${MOCK_VLLM:-0}" != "1" ]; then
-    echo "[start.sh] Launching vLLM on :8000 in background (warms up while API serves)..."
-    python3 -m vllm.entrypoints.openai.api_server \
-        --model /models/Qwen2.5-VL-7B-Instruct \
-        --served-model-name "Qwen2.5-VL-7B-Instruct" \
-        --host 127.0.0.1 --port 8000 \
-        --dtype bfloat16 --max-model-len 32768 \
-        --limit-mm-per-prompt image=1,video=0 \
-        --gpu-memory-utilization 0.85 \
-        --trust-remote-code &
-    echo "[start.sh] vLLM PID=$! (background)"
+    echo "[start.sh] Launching vLLM on :8000 in background with restart-on-crash supervision..."
+    # Self-healing loop: if vLLM exits (OOM, crash), restart it after a short
+    # backoff instead of leaving /recognize permanently degraded. uvicorn stays
+    # PID 1; /health reports vLLM down during the gap.
+    (
+        while true; do
+            python3 -m vllm.entrypoints.openai.api_server \
+                --model /models/Qwen2.5-VL-7B-Instruct \
+                --served-model-name "Qwen2.5-VL-7B-Instruct" \
+                --host 127.0.0.1 --port 8000 \
+                --dtype bfloat16 --max-model-len 32768 \
+                --limit-mm-per-prompt image=1,video=0 \
+                --gpu-memory-utilization 0.85 \
+                --trust-remote-code
+            echo "[start.sh] vLLM exited (code $?). Restarting in 5s..."
+            sleep 5
+        done
+    ) &
+    echo "[start.sh] vLLM supervisor PID=$! (background)"
 else
     echo "[start.sh] Skipping vLLM (GPU disabled or mock)"
 fi

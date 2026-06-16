@@ -1,5 +1,7 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_ALLOWED_DOCUMENT_TYPES = {"base64", "presigned_url", "nebius_object"}
 
 
 class DocumentInput(BaseModel):
@@ -7,6 +9,15 @@ class DocumentInput(BaseModel):
     value: str = Field(..., description="URL, base64-encoded content, or NOS object key")
     mime_type: str = Field(default="image/jpeg")
     page: Optional[int] = Field(default=None, description="Page number for PDF (1-based)")
+
+    @field_validator("type")
+    @classmethod
+    def _check_type(cls, v: str) -> str:
+        if v not in _ALLOWED_DOCUMENT_TYPES:
+            raise ValueError(
+                f"document.type must be one of {sorted(_ALLOWED_DOCUMENT_TYPES)}, got '{v}'"
+            )
+        return v
 
 
 class RecognizeOptions(BaseModel):

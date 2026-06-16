@@ -89,7 +89,7 @@ nebius ai endpoint create \
   --container-port 8080 \
   --platform gpu-h100-sxm \
   --preset 1gpu-16vcpu-200gb \
-  --disk-size 250Gi \
+  --disk-size 80Gi \
   --shm-size 16Gi \
   --subnet-id <SUBNET_ID> \
   --public \
@@ -102,6 +102,8 @@ nebius ai endpoint create \
   --env S3_ENDPOINT=https://storage.eu-north1.nebius.cloud \
   --parent-id <PROJECT_ID>
 ```
+
+> **Tip:** `scripts/deploy-endpoint.sh <tag>` wraps this command and loads secrets by reference from Nebius Mysterybox (`--env-secret`) instead of plaintext `--env`. Run it on the build VM.
 
 The command prints an `endpoint_id`. The Bearer token for requests is the `AUTH_TOKEN` you set above (enforced at the app layer by `verify_token`).
 
@@ -116,7 +118,7 @@ export NEBIUS_ENDPOINT_ID="<ENDPOINT_ID>"
 bash nebius-endpoint/smoke_test.sh
 ```
 
-All 33 tests should pass. Expected output ends with `Smoke OK 33/33`.
+All 35 tests should pass. Expected output ends with `35 passed  0 failed`.
 
 ---
 
@@ -145,7 +147,9 @@ pytest tests/ -q
 
 ## API Reference
 
-All endpoints except `/health`, `/demo`, and `/static` require `Authorization: Bearer <token>` (enforced at the app layer whenever `AUTH_TOKEN` is set).
+All endpoints except `/health`, `/demo`, `/static`, and `/metrics` require `Authorization: Bearer <token>` (enforced at the app layer whenever `AUTH_TOKEN` is set).
+
+A `GET /metrics` endpoint exposes Prometheus text exposition (request counts, latency, vLLM-up) for Nebius Managed Prometheus; disable with `METRICS_ENABLED=0`.
 
 ### POST /recognize
 
@@ -425,7 +429,13 @@ cp .env.example .env
 | `GPU_ENABLED` | No | `1` for GPU mode, `0` for CPU (default: `1`) |
 | `MOCK_VLLM` | No | `1` to use deterministic fixtures instead of real vLLM (default: `0`) |
 | `PDF_DPI` | No | DPI for PDF→image conversion (default: `200`) |
-| `PDF_MAX_PAGES` | No | Max pages per packet request (default: `50`) |
+| `PDF_MAX_PAGES` | No | Max pages per PDF (single-page and packet); over → 422 (default: `50`) |
+| `REQUEST_TIMEOUT` | No | Per-request deadline in seconds; over → 504 (default: `30`) |
+| `PACKET_TIMEOUT` | No | Deadline for multi-page packet requests (default: `180`) |
+| `MAX_UPLOAD_BYTES` | No | Max request body in bytes; over → 413 (default: `26214400` = 25 MiB) |
+| `CORS_ALLOW_ORIGINS` | No | Comma-separated allowed origins; empty = same-origin only (default: empty) |
+| `FETCH_URL_ALLOWLIST` | No | Comma-separated hosts allowed for `presigned_url`; empty → NOS host |
+| `METRICS_ENABLED` | No | Expose `GET /metrics` Prometheus exposition (default: `1`) |
 
 ---
 
@@ -472,6 +482,8 @@ nebius-job/
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+See [WELL-ARCHITECTED.md](WELL-ARCHITECTED.md) for a pillar-by-pillar review of the design mapped to Nebius infrastructure.
 
 Built with [Nebius AI](https://nebius.com) for the Nebius Serverless AI Builders Challenge.  
 `#NebiusServerlessChallenge`

@@ -463,6 +463,25 @@ HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
 [ "$HTTP" = "404" ] && pass "T33: GET deleted blueprint → 404" || fail "T33: GET deleted blueprint → $HTTP (expected 404)"
 
 # -------------------------------------------------------------
+# Group 9 — Security hardening (Well-Architected)
+# -------------------------------------------------------------
+header "Group 9: Security hardening"
+
+# T34: presigned_url with a disallowed host → 400 (SSRF allowlist)
+HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST "$BASE_URL/recognize" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"document":{"type":"presigned_url","value":"https://evil.example.com/x.jpg","mime_type":"image/jpeg"},"mode":"auto"}')
+[ "$HTTP" = "400" ] && pass "T34: presigned_url bad host → 400 (SSRF blocked)" || fail "T34: presigned_url bad host → $HTTP (expected 400)"
+
+# T35: invalid document.type → 422 (enum validation)
+HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST "$BASE_URL/recognize" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"document":{"type":"ftp","value":"x","mime_type":"image/jpeg"},"mode":"raw"}')
+[ "$HTTP" = "422" ] && pass "T35: invalid document.type → 422" || fail "T35: invalid document.type → $HTTP (expected 422)"
+
+# -------------------------------------------------------------
 # Summary
 # -------------------------------------------------------------
 echo ""

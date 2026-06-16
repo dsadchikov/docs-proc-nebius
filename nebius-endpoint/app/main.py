@@ -12,7 +12,7 @@ from botocore.config import Config as BotoConfig
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Query
-from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.responses import JSONResponse, FileResponse, Response, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,9 +22,11 @@ from app.models import RecognizeRequest, RecognizeResponse, BlueprintCreate, Blu
 from app.nos_writer import write_outbound
 from app.extractor import extract_document, extract_auto, extract_packet, preprocess_document, generate_blueprint_from_document
 from app.blueprint_loader import BlueprintStore
+from app.logging_config import configure_logging
+from app import metrics
 
+configure_logging()
 logger = logging.getLogger("app")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 blueprint_store: BlueprintStore = None
 
@@ -32,19 +34,44 @@ blueprint_store: BlueprintStore = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global blueprint_store
+    # Re-assert JSON logging after uvicorn has installed its own handlers.
+    configure_logging()
     app.state.http_client = httpx.AsyncClient(base_url=Config.VLLM_BASE_URL, timeout=Config.VLLM_TIMEOUT)
     app.state.start_time = time.time()
     blueprint_store = BlueprintStore()
     app.state.blueprint_store = blueprint_store
     logger.info("FastAPI started | GPU:%s Mock:%s vLLM:%s", Config.GPU_ENABLED, Config.MOCK_VLLM, Config.VLLM_BASE_URL)
+    if not Config.AUTH_TOKEN and Config.GPU_ENABLED and not Config.MOCK_VLLM:
+        logger.warning(
+            "AUTH_TOKEN is not set on a GPU (non-mock) deployment — the API is OPEN. "
+            "Set AUTH_TOKEN to protect /recognize and the blueprint APIs."
+        )
     yield
     await app.state.http_client.aclose()
 
 
 app = FastAPI(title="Nebius Document Recognition", version="2.0.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    """Reject oversized requests early (base64 memory-DoS guard)."""
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > Config.MAX_UPLOAD_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request body exceeds MAX_UPLOAD_BYTES={Config.MAX_UPLOAD_BYTES}"},
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=Config.CORS_ALLOW_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
@@ -75,6 +102,21 @@ async def health(request: Request):
         "status": "healthy" if vllm_ok else "degraded", "vllm": "up" if vllm_ok else "down",
         "fastapi": "up", "gpu_enabled": Config.GPU_ENABLED, "mock_mode": Config.MOCK_VLLM,
         "model": Config.VLLM_MODEL_NAME, "uptime_seconds": round(uptime, 1), "blueprints_loaded": bp_count})
+
+
+@app.get("/metrics")
+async def metrics_endpoint(request: Request):
+    """Prometheus text exposition (aggregate-only). Disable via METRICS_ENABLED=0."""
+    if not Config.METRICS_ENABLED:
+        raise HTTPException(status_code=404, detail="metrics disabled")
+    vllm_up = Config.MOCK_VLLM
+    if not vllm_up:
+        try:
+            resp = await request.app.state.http_client.get("/health")
+            vllm_up = resp.status_code == 200
+        except Exception:
+            vllm_up = False
+    return PlainTextResponse(metrics.render(vllm_up))
 
 
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
@@ -158,18 +200,37 @@ async def recognize(request: Request, body: RecognizeRequest, _=Depends(verify_t
         blueprint = blueprint_store.get(body.blueprint_id)
         if not blueprint:
             raise HTTPException(422, f"Blueprint not found: '{body.blueprint_id}'")
-    if body.mode == "auto":
-        image_content, document_part = await preprocess_document(body.document)
-        result = await extract_auto(request.app.state.http_client, image_content, document_part, body.options, blueprint_store)
-    elif body.mode == "packet":
-        result = await extract_packet(request.app.state.http_client, body.document, body.options, blueprint_store)
-    else:
-        result = await extract_document(request.app.state.http_client, body, blueprint)
+    async def _run():
+        if body.mode == "auto":
+            image_content, document_part = await preprocess_document(body.document)
+            return await extract_auto(request.app.state.http_client, image_content, document_part, body.options, blueprint_store)
+        elif body.mode == "packet":
+            return await extract_packet(request.app.state.http_client, body.document, body.options, blueprint_store)
+        else:
+            return await extract_document(request.app.state.http_client, body, blueprint)
+
+    # Per-request deadline (Req 1.6). Packet mode gets a larger budget.
+    deadline = Config.PACKET_TIMEOUT if body.mode == "packet" else Config.REQUEST_TIMEOUT
+    try:
+        result = await asyncio.wait_for(_run(), timeout=deadline)
+    except (asyncio.TimeoutError, httpx.TimeoutException):
+        metrics.record_request(body.mode, "timeout", time.time() - start)
+        logger.warning("recognize timeout", extra={"request_id": request_id, "mode": body.mode, "deadline_s": deadline})
+        raise HTTPException(status_code=504, detail=f"Recognition exceeded {deadline}s")
+
     result.request_id = request_id
     asyncio.create_task(write_outbound(request_id, result.model_dump()))
-    logger.info("recognize: request_id=%s mode=%s bp=%s conf=%s route=%s time=%.2fs",
-                request_id, body.mode, body.blueprint_id,
-                getattr(result, "document_confidence", None), result.routing, time.time()-start)
+    duration = time.time() - start
+    routing = getattr(result, "routing", None)
+    metrics.record_request(body.mode, routing, duration)
+    logger.info(
+        "recognize complete",
+        extra={
+            "request_id": request_id, "mode": body.mode, "blueprint_id": body.blueprint_id,
+            "document_confidence": getattr(result, "document_confidence", None),
+            "routing": routing, "duration_s": round(duration, 3),
+        },
+    )
     return result
 
 
