@@ -14,7 +14,7 @@ The service runs as a Docker container deployed to a **Nebius GPU Endpoint** (1�
 
 - **FastAPI** handles HTTP routing, auth, NOS integration, and the demo UI
 - **vLLM** serves `Qwen2.5-VL-7B-Instruct` — a vision-language model that takes an image plus a prompt and returns structured JSON
-- **nginx** sits in front for TLS termination and rate limiting
+- **uvicorn** runs FastAPI directly on port 8080 as PID 1; vLLM warms up in the background. The Nebius endpoint ingress handles TLS and public routing, so there's no in-container reverse proxy to manage
 
 The architecture is "standalone-first": all config comes from environment variables, blueprints can be served from the local filesystem or synced from Nebius Object Storage (NOS), and the same image runs CPU-only with `MOCK_VLLM=1` for local development without a GPU.
 
@@ -70,11 +70,11 @@ The API exposes five `mode` values on `POST /recognize`:
 
 - **`blueprint`** — extract exactly the fields defined in a named blueprint
 - **`auto`** — classify the document type first, pick the best blueprint, then extract
-- **`raw_text`** — return the VLM's free-text output without parsing
+- **`raw`** — return the VLM's free-text output without parsing
 - **`double_check`** — extract twice with different prompts, cross-validate, lower confidence on disagreements
 - **`packet`** — for multi-page PDFs: classify each page, group consecutive same-type pages, extract per logical document
 
-The routing field on every response maps to a confidence band: `high_confidence` (≥90), `medium_confidence` (70–89), `low_confidence` (<70), `manual_review`. This lets downstream systems make straight-through / review / reject decisions without inspecting individual field scores.
+The routing field on every response maps to a confidence band: `auto_classified` (85–100), `review_required` (50–84), `escalate_to_operator` (0–49). This lets downstream systems make straight-through / review / escalate decisions without inspecting individual field scores.
 
 ## Evaluating on MIDV-2020
 

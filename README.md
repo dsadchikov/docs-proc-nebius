@@ -2,7 +2,7 @@
 
 **Serverless document-recognition service** built for the [Nebius Serverless AI Builders Challenge](https://nebius.com/blog/posts/ai-builders-challenge).
 
-Runs on a Nebius GPU endpoint (H100 SXM) with [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) via vLLM. Extracts structured fields from identity documents, with per-field confidence from vLLM logprobs, JSON schema enforcement (guided decoding), multi-page PDF support, and a browser-based demo UI — all behind a FastAPI + nginx stack with NOS-backed blueprints.
+Runs on a Nebius GPU endpoint (H100 SXM) with [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) via vLLM. Extracts structured fields from identity documents, with per-field confidence from vLLM logprobs, JSON schema enforcement (guided decoding), multi-page PDF support, and a browser-based demo UI — all behind a FastAPI (uvicorn) app with NOS-backed blueprints.
 
 ---
 
@@ -12,10 +12,10 @@ Runs on a Nebius GPU endpoint (H100 SXM) with [Qwen2.5-VL-7B-Instruct](https://h
 Client
   │ HTTPS
   ▼
-nginx (TLS termination, rate-limit, static assets)
+Nebius endpoint ingress (TLS termination, public routing)
   │
   ▼
-FastAPI app  ──────────────────────────────────────────────────────────
+FastAPI app (uvicorn, :8080)  ──────────────────────────────────────────
   │  /recognize                         │  /blueprints/*
   │                                      │
   ▼                                      ▼
@@ -39,7 +39,7 @@ extractor.py                      blueprint_loader.py
 
 | Feature | Detail |
 |---|---|
-| **4 recognition modes** | `blueprint`, `auto`, `raw_text`, `double_check` |
+| **5 recognition modes** | `blueprint`, `auto`, `raw`, `double_check`, `packet` |
 | **Multi-page packets** | `mode=packet` — classify each page, group consecutive same-type pages, extract per logical document |
 | **Logprob confidence** | Per-field `confidence` (0–100) derived from vLLM token log-probabilities; `confidence_source: "logprobs"` |
 | **Guided JSON** | `blueprint_to_guided_schema` → `guided_json` param on vLLM call; retry without guided on backend error |
@@ -93,7 +93,8 @@ nebius ai endpoint create \
   --shm-size 16Gi \
   --subnet-id <SUBNET_ID> \
   --public \
-  --auth token \
+  --auth none \
+  --env AUTH_TOKEN=<YOUR_AUTH_TOKEN> \
   --env S3_ACCESS_KEY=<S3_ACCESS_KEY> \
   --env S3_SECRET_KEY=<S3_SECRET_KEY> \
   --env S3_BUCKET=<YOUR_NOS_BUCKET> \
@@ -102,7 +103,9 @@ nebius ai endpoint create \
   --parent-id <PROJECT_ID>
 ```
 
-The command prints an `endpoint_id` and `token`. Save them — you will need them for requests.
+The command prints an `endpoint_id`. The Bearer token for requests is the `AUTH_TOKEN` you set above (enforced at the app layer by `verify_token`).
+
+> **Why `--auth none` + `AUTH_TOKEN`?** Nebius `--auth token` puts an ingress that requires a Bearer on *every* path, which blocks the browser demo (`GET /demo` and CORS preflight both 401). Deploying with `--auth none` keeps the ingress open so `/demo`, `/static`, and `/health` load in the browser, while the app's own `AUTH_TOKEN` protects `/recognize` and the blueprint APIs.
 
 ### 5. Smoke test
 
@@ -142,7 +145,7 @@ pytest tests/ -q
 
 ## API Reference
 
-All endpoints except `/health` and `/demo` require `Authorization: Bearer <token>`.
+All endpoints except `/health`, `/demo`, and `/static` require `Authorization: Bearer <token>` (enforced at the app layer whenever `AUTH_TOKEN` is set).
 
 ### POST /recognize
 
@@ -174,7 +177,7 @@ Extract fields from a document.
 `mode` options:
 - `blueprint` — extract fields defined in a blueprint; requires `blueprint_id`
 - `auto` — classify document type, pick best blueprint, extract
-- `raw_text` — return raw VLM text with no structured parsing
+- `raw` — return raw VLM text with no structured parsing
 - `double_check` — extract twice, cross-validate, lower confidence on disagreements
 - `packet` — multi-page PDF: classify pages, group by type, extract per logical document
 
@@ -186,7 +189,7 @@ Extract fields from a document.
   "mode": "blueprint",
   "blueprint_id": "passport",
   "document_confidence": 94,
-  "routing": "high_confidence",
+  "routing": "auto_classified",
   "fields": {
     "document_number": {
       "value": "AB123456",
@@ -207,7 +210,7 @@ Extract fields from a document.
 }
 ```
 
-`routing` bands: `high_confidence` (≥90), `medium_confidence` (70–89), `low_confidence` (<70), `manual_review`.
+`routing` bands: `auto_classified` (85–100), `review_required` (50–84), `escalate_to_operator` (0–49). The three bands are exhaustive and mutually exclusive.
 
 **Response (packet mode):**
 
@@ -220,14 +223,14 @@ Extract fields from a document.
       "pages": [1, 2],
       "blueprint_id": "passport",
       "document_confidence": 91,
-      "routing": "high_confidence",
+      "routing": "auto_classified",
       "fields": { ... }
     },
     {
       "pages": [3],
       "blueprint_id": "id_card",
-      "document_confidence": 85,
-      "routing": "medium_confidence",
+      "document_confidence": 72,
+      "routing": "review_required",
       "fields": { ... }
     }
   ]
@@ -266,6 +269,7 @@ After upload, pass `{"type": "nebius_object", "value": "<nos_key>"}` in `/recogn
 {
   "status": "healthy",
   "vllm": "up",
+  "fastapi": "up",
   "gpu_enabled": true,
   "mock_mode": false,
   "model": "Qwen2.5-VL-7B-Instruct",
@@ -451,7 +455,7 @@ nebius-endpoint/
 ├── Dockerfile               # GPU endpoint image
 ├── Dockerfile.cpu           # CPU / local dev image
 ├── docker-compose.cpu.yml   # Local dev compose
-├── nginx.conf               # Reverse proxy config
+├── start.sh                 # uvicorn (PID 1, :8080) + vLLM in background
 └── smoke_test.sh            # 33-test end-to-end smoke suite
 
 nebius-job/
