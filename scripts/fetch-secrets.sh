@@ -19,9 +19,9 @@ if [ -z "$RAW" ]; then
 fi
 
 {
-  echo "# !! НЕ КОММИТИТЬ !! Добавлен в .gitignore"
-  echo "# Источник истины: Nebius Mysterybox $SECRET_ID"
-  echo "# Обновлено: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "# !! DO NOT COMMIT !! Added to .gitignore"
+  echo "# Source of truth: Nebius Mysterybox $SECRET_ID"
+  echo "# Updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo ""
   echo "$RAW" | python3 -c "
 import sys, re
