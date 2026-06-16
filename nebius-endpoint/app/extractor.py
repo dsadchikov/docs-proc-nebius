@@ -444,13 +444,18 @@ def apply_verification(fields, verify_response):
     return fields
 
 
-async def call_vllm(http_client, system_prompt, user_prompt, image_content, guided_schema=None) -> VLLMResult:
+async def call_vllm(http_client, system_prompt, user_prompt, image_content=None, guided_schema=None) -> VLLMResult:
     if Config.MOCK_VLLM:
         text = mock_vllm_response(system_prompt, user_prompt)
         return VLLMResult(text=text, logprobs=mock_logprobs(text))
+    # Text-only when image_content is None (e.g. blueprint Pass 2 reasons over the
+    # Pass 1 description and must NOT see the document, or it transcribes values).
+    user_content = [{"type": "text", "text": user_prompt}]
+    if image_content is not None:
+        user_content = [image_content, {"type": "text", "text": user_prompt}]
     payload = {"model": Config.VLLM_MODEL_NAME, "messages": [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": [image_content, {"type": "text", "text": user_prompt}]}
+        {"role": "user", "content": user_content}
     ], "max_tokens": 4096, "temperature": 0.0, "logprobs": True}
     if guided_schema is not None:
         payload["guided_json"] = guided_schema
@@ -569,9 +574,10 @@ async def generate_blueprint_from_document(
     # Pass 1: raw document description
     # ------------------------------------------------------------------
     system_pass1 = (
-        "You are a document analysis expert. Carefully examine this document image and "
-        "describe every visible field, label, value, section, and identifier you can see. "
-        "Be thorough and specific."
+        "You are a document analysis expert. Examine this document image and identify every "
+        "field, label, and logical section. For each field describe what it REPRESENTS and the "
+        "TYPE/FORMAT of its value (text, date, number, code, MRZ line, signature, photo). "
+        "Focus on the meaning and format of each field — do NOT transcribe the specific values."
     )
     user_pass1 = (
         "Describe all fields and sections in this document. "
@@ -583,34 +589,41 @@ async def generate_blueprint_from_document(
     # Pass 2: structured blueprint generation
     # ------------------------------------------------------------------
     system_pass2 = (
-        'You are a document schema designer. Based on the document description provided, '
-        'generate a Rich Blueprint JSON schema.\n\n'
+        'You are a document schema designer. From the document description, generate a REUSABLE '
+        'Rich Blueprint JSON schema that works for ANY document of this same type — not just the '
+        'sample.\n\n'
         'The output MUST be valid JSON in exactly this format:\n'
         '{\n'
         '  "sections": {\n'
         '    "SECTION_NAME": {\n'
         '      "field_name": {\n'
         '        "inferenceType": "explicit" | "inferred",\n'
-        '        "instruction": "extraction instruction, e.g. YYYY-MM-DD or uppercase as printed",\n'
+        '        "instruction": "<short reusable extraction hint>",\n'
         '        "required": true | false\n'
         '      }\n'
         '    }\n'
         '  }\n'
         '}\n\n'
-        'Rules:\n'
-        '- Use inferenceType "explicit" for fields read verbatim (names, numbers, codes)\n'
-        '- Use inferenceType "inferred" for fields that require interpretation '
-        '(dates → YYYY-MM-DD, sex → M or F)\n'
-        '- Group fields into logical SECTION_NAMEs '
-        '(e.g. DOCUMENT_METADATA, PERSONAL_INFO, DOCUMENT_DETAILS)\n'
-        '- Return ONLY valid JSON, no markdown fences, no explanation'
+        'Rules for "instruction":\n'
+        '- It is a SHORT, REUSABLE hint describing what the field is and how to read/normalize it.\n'
+        '- It MUST NOT contain the actual value seen in the sample.\n'
+        '  WRONG: "VIESTURS"            RIGHT: "Holder surname, uppercase Latin letters as printed"\n'
+        '  WRONG: "230173-11412"        RIGHT: "Personal identity code, format NNNNNN-NNNNN"\n'
+        '  WRONG: "P<LVAVIESTURS<<..."  RIGHT: "MRZ line 1, TD3 format (44 chars), as printed"\n'
+        '- For dates use the target format, e.g. "Date of birth, normalize to YYYY-MM-DD".\n\n'
+        'Other rules:\n'
+        '- inferenceType "explicit" for fields read verbatim (names, numbers, codes).\n'
+        '- inferenceType "inferred" for fields needing interpretation (dates, sex M/F).\n'
+        '- Group fields into logical SECTION_NAMEs (DOCUMENT_METADATA, PERSONAL_INFO, MRZ, ...).\n'
+        '- Return ONLY valid JSON, no markdown fences, no explanation.'
     )
     user_pass2 = (
         f"Document description:\n{raw_description}\n\n"
         "Generate the Rich Blueprint JSON schema for this document type."
     )
-    # Req 14.5 — guided decoding with the Rich Blueprint meta-schema
-    schema_result = await call_vllm(http_client, system_pass2, user_pass2, image_content,
+    # Req 14.5 — guided decoding with the Rich Blueprint meta-schema.
+    # No image: Pass 2 reasons over the Pass 1 description so it cannot transcribe values.
+    schema_result = await call_vllm(http_client, system_pass2, user_pass2,
                                     guided_schema=BLUEPRINT_META_SCHEMA)
     sections = parse_json_response(schema_result.text)
 
