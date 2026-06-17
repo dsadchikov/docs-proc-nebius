@@ -97,52 +97,80 @@ BLUEPRINT_META_SCHEMA = {
 }
 
 
+def _build_bpe_byte_decoder() -> dict:
+    """Reverse of GPT-2 `bytes_to_unicode`: maps each meta-char back to its byte."""
+    bs = (list(range(ord("!"), ord("~") + 1))
+          + list(range(ord("¡"), ord("¬") + 1))
+          + list(range(ord("®"), ord("ÿ") + 1)))
+    cs = bs[:]
+    n = 0
+    for b in range(256):
+        if b not in bs:
+            bs.append(b)
+            cs.append(256 + n)
+            n += 1
+    return {chr(c): b for b, c in zip(bs, cs)}
+
+
+_BPE_BYTE_DECODER = _build_bpe_byte_decoder()
+
+
+def _token_bytes(tok: str) -> bytes:
+    """Decode one vLLM logprobs token piece back to raw bytes.
+
+    vLLM returns GPT-2 byte-level BPE pieces, where a space is `Ġ` (U+0120) and a
+    newline is `Ċ` (U+010A) — NOT literal whitespace. Plain text (mock mode) and
+    any char outside the BPE alphabet pass through as their UTF-8 bytes.
+    """
+    out = bytearray()
+    for ch in tok:
+        b = _BPE_BYTE_DECODER.get(ch)
+        if b is None:
+            out.extend(ch.encode("utf-8"))
+        else:
+            out.append(b)
+    return bytes(out)
+
+
 def logprob_confidence(value, logprobs_content, field_name: str = "") -> tuple:
     """Per-field confidence from token logprobs (Req 13).
 
     Returns (confidence: int|None, source: str). source is 'logprobs' when the
-    value span was located in the generated text, 'response_mean' when only a
-    whole-response mean was possible, 'model_reported' when no logprobs exist.
+    value span was located among the generated tokens, 'response_mean' when only
+    a whole-response mean was possible, 'model_reported' when no logprobs exist.
+
+    Matching is done on the *decoded bytes* of the token pieces: vLLM encodes
+    space/newline as `Ġ`/`Ċ`, so the old `"".join(tokens)` search missed every
+    value containing whitespace (multi-word names, spaced dates, addresses) and
+    fell back to response_mean — confirmed live on v29.
     """
     if not logprobs_content:
         return None, "model_reported"
     try:
         tokens = [e["token"] if isinstance(e, dict) else getattr(e, "token", "") for e in logprobs_content]
         lps = [e["logprob"] if isinstance(e, dict) else getattr(e, "logprob", 0.0) for e in logprobs_content]
-        full = "".join(tokens)
+        # Build the decoded byte buffer + per-token byte span for offset mapping.
+        buf = bytearray()
+        spans = []  # (byte_start, byte_end, logprob)
+        for tok, lp in zip(tokens, lps):
+            start = len(buf)
+            buf.extend(_token_bytes(tok))
+            spans.append((start, len(buf), lp))
+        full = bytes(buf)
         sel = []
         if value is not None and str(value):
-            needle = str(value)
-            # Anchor the search after the field name key when possible —
-            # the same value can appear under several fields.
-            anchor = full.find(f'"{field_name}"') if field_name else -1
+            needle = str(value).encode("utf-8")
+            # Anchor after the field-name key — the same value can appear twice.
+            anchor = full.find(b'"' + field_name.encode("utf-8") + b'"') if field_name else -1
             start = full.find(needle, anchor if anchor >= 0 else 0)
             if start < 0:
                 start = full.find(needle)
-            if start < 0:
-                # The parsed value is JSON-unescaped, but the raw token text keeps
-                # escapes (\n, \", \uXXXX in multi-line/address/unicode fields).
-                # Retry with the escaped form so these fields get true logprob
-                # confidence instead of falling back to response_mean (Req 13.3).
-                try:
-                    esc = json.dumps(needle)[1:-1]
-                except Exception:
-                    esc = needle
-                if esc != needle:
-                    start = full.find(esc, anchor if anchor >= 0 else 0)
-                    if start < 0:
-                        start = full.find(esc)
-                    if start >= 0:
-                        needle = esc
             if start >= 0:
                 end = start + len(needle)
-                pos = 0
-                for tok, lp in zip(tokens, lps):
-                    tok_start, tok_end = pos, pos + len(tok)
-                    if tok_end > start and tok_start < end:
+                for s, e, lp in spans:
+                    if e > start and s < end:
                         sel.append(lp)
-                    pos = tok_end
-                    if tok_start >= end:
+                    if s >= end:
                         break
         if sel:
             return clamp_confidence(100 * math.exp(sum(sel) / len(sel))), "logprobs"

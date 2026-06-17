@@ -461,6 +461,32 @@ def test_p11_no_logprobs_is_model_reported():
     assert (conf, source) == (None, "model_reported")
 
 
+def test_p11_bpe_space_tokens_yield_logprobs_not_response_mean():
+    """Regression (v29 bug, confirmed live): vLLM emits GPT-2 byte-level BPE
+    tokens where a space is `Ġ` (U+0120) and a newline is `Ċ` (U+010A), NOT
+    literal whitespace. The old "".join(tokens) substring search missed every
+    value containing a space (multi-word names, spaced dates) and fell back to
+    response_mean. logprob_confidence must decode the byte-level pieces and find
+    the span → source='logprobs'.
+
+    Validates: Requirements 13.2, 13.3
+    """
+    # Real capture shape: {"full_name": "ROBERTO CORONADO VALVERDE", ...}
+    tokens = ['{Ċ', 'Ġ', 'Ġ"', 'full', '_name', '":', 'Ġ"',
+              'RO', 'BERT', 'O', 'ĠCOR', 'ON', 'ADO', 'ĠVAL', 'VER', 'DE', '"']
+    lp = [{"token": t, "logprob": -0.05} for t in tokens]
+
+    conf, source = logprob_confidence("ROBERTO CORONADO VALVERDE", lp, "full_name")
+    assert source == "logprobs", "spaced value must resolve via decoded byte span"
+    assert conf == 95  # exp(-0.05) ≈ 0.951
+
+    # A spaced date likewise resolves (no longer response_mean)
+    date_tokens = ['"', 'date', '":', 'Ġ"', '27', 'Ġ01', 'Ġ', '1978', '"']
+    lp2 = [{"token": t, "logprob": -0.1} for t in date_tokens]
+    conf2, source2 = logprob_confidence("27 01 1978", lp2, "date")
+    assert source2 == "logprobs"
+
+
 # ---------------------------------------------------------------------------
 # P12 — Guided schema matches blueprint exactly
 #
