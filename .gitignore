@@ -13,6 +13,7 @@ venv/
 .DS_Store
 INTERNAL-RUNBOOK.md
 internal-docs/
+CLAUDE.md
 
 # Local-only specs (.kiro): contain internal references — kept out of the public repo
 .kiro/

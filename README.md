@@ -17,8 +17,8 @@ Nebius endpoint ingress (TLS termination, public routing)
   ▼
 FastAPI app (uvicorn, :8080)  ──────────────────────────────────────────
   │  /recognize                         │  /blueprints/*
-  │                                      │
-  ▼                                      ▼
+  │                                     │
+  ▼                                     ▼
 extractor.py                      blueprint_loader.py
   ├── extract_document()            ├── BlueprintStore (in-memory)
   ├── extract_auto()                ├── loads local /app/blueprints/
@@ -466,7 +466,7 @@ nebius-endpoint/
 ├── Dockerfile.cpu           # CPU / local dev image
 ├── docker-compose.cpu.yml   # Local dev compose
 ├── start.sh                 # uvicorn (PID 1, :8080) + vLLM in background
-└── smoke_test.sh            # 33-test end-to-end smoke suite
+└── smoke_test.sh            # 35-test end-to-end smoke suite
 
 nebius-job/
 ├── job.py                   # MIDV-2020 evaluation harness (calls the Endpoint)
