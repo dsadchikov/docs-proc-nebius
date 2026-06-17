@@ -2,6 +2,9 @@
 
 **Serverless document-recognition service** built for the [Nebius Serverless AI Builders Challenge](https://nebius.com/blog/posts/ai-builders-challenge).
 
+📹 **Video walkthrough:** <!-- TODO: add public 3–10 min video link before submission -->
+🔎 **Proof of execution:** see [Proof of Execution](#proof-of-execution) (live endpoint URL, sample results, eval report).
+
 Runs on a Nebius GPU endpoint (H100 SXM) with [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) via vLLM. Extracts structured fields from identity documents, with per-field confidence from vLLM logprobs, JSON schema enforcement (guided decoding), multi-page PDF support, and a browser-based demo UI — all behind a FastAPI (uvicorn) app with NOS-backed blueprints.
 
 ---
@@ -57,18 +60,38 @@ extractor.py                      blueprint_loader.py
 
 - [Nebius CLI](https://docs.nebius.com/cli/) configured (`nebius iam whoami` works)
 - Docker registry in your Nebius project
-- Nebius Object Storage bucket (for blueprints)
-- Static access key (`S3_ACCESS_KEY` / `S3_SECRET_KEY`)
 
-### 2. Build and push
+### 2. Provision storage and credentials
+
+Create a Nebius Object Storage (NOS) bucket for blueprints and a static S3 key the
+endpoint uses to read/write it:
 
 ```bash
-# On a Linux build machine with Docker
-docker build -f nebius-endpoint/Dockerfile -t cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:v1 nebius-endpoint/
-docker push cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:v1
+# Create the NOS bucket (one-time)
+nebius storage bucket create \
+  --name <YOUR_NOS_BUCKET> \
+  --parent-id <PROJECT_ID>
+
+# Issue a static S3 access key for a service account
+# (scripts/setup-iam.sh provisions a least-privilege SA scoped to this bucket)
+nebius iam service-account static-key create \
+  --service-account-id <SA_ID> \
+  --format json
 ```
 
-### 3. Upload blueprints to NOS
+The command prints `S3_ACCESS_KEY` / `S3_SECRET_KEY` — store them in Nebius Mysterybox
+(see `scripts/setup-iam.sh`) and pass them to the endpoint in step 5. The bucket region
+is `eu-north1` (S3 endpoint `https://storage.eu-north1.nebius.cloud`).
+
+### 3. Build and push
+
+```bash
+# On a Linux build machine with Docker (use your image tag, e.g. v29 — the current build)
+docker build -f nebius-endpoint/Dockerfile -t cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG> nebius-endpoint/
+docker push cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG>
+```
+
+### 4. Upload blueprints to NOS
 
 ```bash
 # Upload built-in blueprints so the endpoint can pull them
@@ -80,12 +103,12 @@ for bp in nebius-endpoint/blueprints/*/v1.json; do
 done
 ```
 
-### 4. Deploy endpoint
+### 5. Deploy endpoint
 
 ```bash
 nebius ai endpoint create \
-  --name doc-recognition-v1 \
-  --image cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:v1 \
+  --name doc-recognition \
+  --image cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG> \
   --container-port 8080 \
   --platform gpu-h100-sxm \
   --preset 1gpu-16vcpu-200gb \
@@ -109,7 +132,7 @@ The command prints an `endpoint_id`. The Bearer token for requests is the `AUTH_
 
 > **Why `--auth none` + `AUTH_TOKEN`?** Nebius `--auth token` puts an ingress that requires a Bearer on *every* path, which blocks the browser demo (`GET /demo` and CORS preflight both 401). Deploying with `--auth none` keeps the ingress open so `/demo`, `/static`, and `/health` load in the browser, while the app's own `AUTH_TOKEN` protects `/recognize` and the blueprint APIs.
 
-### 5. Smoke test
+### 6. Smoke test
 
 ```bash
 export NEBIUS_ENDPOINT_URL="http://<PUBLIC_IP>:8080"
@@ -286,6 +309,10 @@ After upload, pass `{"type": "nebius_object", "value": "<nos_key>"}` in `/recogn
 
 Opens the browser demo UI. No auth required.
 
+<!-- TODO: capture a real /demo screenshot/GIF before submission. /images/ is gitignored,
+     so commit with: git add -f images/demo-screenshot.png -->
+![Demo UI](images/demo-screenshot.png)
+
 ---
 
 ## Blueprint Format
@@ -334,7 +361,7 @@ Built-in blueprints: `passport`, `id_card`, `residence_permit_ltu_front`, `defau
 
 The eval job measures field-level accuracy on the public [MIDV-2020](https://smartengines.com/midv-2020/) synthetic dataset (60 documents, 3 document types).
 
-### Results (Qwen2.5-VL-7B-Instruct, v22, H100 SXM)
+### Results (Qwen2.5-VL-7B-Instruct, v29, H100 SXM)
 
 **Per-field accuracy (exact match after normalization):**
 
@@ -389,6 +416,26 @@ docker run --rm \
 ```
 
 Results are written to `eval/results/<job_id>/` in NOS and a summary report to `eval/reports/<job_id>.json`.
+
+The eval is itself a **Nebius Serverless Job** (`nebius-job/`) that reuses the same image as
+the endpoint, so the submission exercises both Nebius Serverless products — the Endpoint
+(live `/recognize`) and Jobs (batch evaluation).
+
+---
+
+## Proof of Execution
+
+Captured artifacts from a live run, for judges to verify the service end-to-end:
+
+- **Live endpoint / demo:** `<TODO: public endpoint URL>` → `/demo` <!-- TODO: add live URL + judge Bearer token note before submission -->
+- **Sample recognition results** (≥2 distinct document types):
+  - `samples/recognize_srb_passport.json` <!-- TODO: capture from a live POST /recognize run before submission -->
+  - `samples/recognize_esp_id.json` <!-- TODO: capture from a live POST /recognize run before submission -->
+- **Evaluation summary report (job logs):** `samples/eval_report.json` <!-- TODO: copy eval/reports/<job_id>.json from a live Job run before submission -->
+
+See [`samples/README.md`](samples/README.md) for the exact capture commands. These files
+are committed once captured against the live endpoint — this sandbox has no live GPU
+endpoint to produce them.
 
 ---
 

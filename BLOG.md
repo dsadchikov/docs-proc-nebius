@@ -80,7 +80,7 @@ The routing field on every response maps to a confidence band: `auto_classified`
 
 Evaluating document recognition honestly requires a public, labeled dataset. Real user documents can't appear in a public repo or demo. The [MIDV-2020](https://smartengines.com/midv-2020/) dataset from Smart Engines solves this: 1 000 synthetic identity documents across 10 types, with VIA 2.x polygon annotations for all text fields.
 
-I picked three types — `esp_id` (Spanish national ID), `grc_passport` (Greek passport), `srb_passport` (Serbian passport) — and ran 60 documents through the GPU endpoint. Results with `mode=blueprint`:
+We picked three types — `esp_id` (Spanish national ID), `grc_passport` (Greek passport), `srb_passport` (Serbian passport) — and ran 60 documents through the GPU endpoint. Results with `mode=blueprint`:
 
 | Field | Accuracy |
 |---|---|
@@ -96,6 +96,16 @@ The dates look low, but the issue is format normalization: MIDV stores dates as 
 
 Greek-script fields (`grc_passport`) dragged the overall number down to 25% — Qwen2.5-VL-7B produces Latin/MRZ approximations for polytonic Greek characters. That's a known 7B limitation; a larger model resolves it.
 
+## Endpoint *and* Job: Both Halves of Nebius Serverless
+
+"Serverless AI" on Nebius is two products — a **Serverless Endpoint** for live inference
+and **Serverless Jobs** for batch work — and this submission uses both. The `/recognize`
+API is the Endpoint. The MIDV-2020 evaluation runs as a **Nebius Serverless Job**
+(`nebius-job/`) that calls the live endpoint over 60 documents and writes results plus a
+summary report to NOS. Crucially, the Job and the Endpoint **share one Docker image and
+code path** — there's no second artifact to build, version, or pay for. The same container
+serves a single request interactively and grinds through a labeled dataset as a batch Job.
+
 ## Performance and Cost on Nebius
 
 60 documents, `mode=blueprint`, H100 SXM:
@@ -109,19 +119,39 @@ Nebius Serverless GPU Endpoints are billed per second of active compute with no 
 
 The H100 SXM handles `Qwen2.5-VL-7B-Instruct` comfortably: model loads in under 2 minutes, inference is ~1.5s/doc at full resolution, and the endpoint scales horizontally if needed.
 
-## What I Learned
+## What We Learned
 
-**Blueprint prompt engineering is more fragile than it looks.** I tried adding "STRICTLY return YYYY-MM-DD or null" to date instructions and "use Latin script only" for surname. The first caused the model to return null for any date it wasn't certain about (date_of_issue dropped from 55% to 37%). The second caused it to prefer MRZ-format surnames over printed names (surname dropped from 65% to 50%). The lesson: for 7B VLMs, conservative prompts outperform precise ones. More instruction → more constraint → more ways to go wrong.
+**Blueprint prompt engineering is more fragile than it looks.** We tried adding "STRICTLY return YYYY-MM-DD or null" to date instructions and "use Latin script only" for surname. The first caused the model to return null for any date it wasn't certain about (date_of_issue dropped from 55% to 37%). The second caused it to prefer MRZ-format surnames over printed names (surname dropped from 65% to 50%). The lesson: for 7B VLMs, conservative prompts outperform precise ones. More instruction → more constraint → more ways to go wrong.
 
 **Normalize at the metric layer, not the prompt layer.** Format variation (date formats, separator characters in personal numbers) should be handled in your evaluation code, not by making your prompts more prescriptive. The model already knows dates; it just formats them consistently in its own way.
 
 **Logprobs are a practical confidence signal even at 7B.** The 5.5 pp calibration gap is small but directionally correct — wrong extractions do score lower on average. For a triage routing system (auto-approve high-confidence, queue low-confidence for review), this is good enough.
+
+## Hardening It for Production
+
+A demo that only handles the happy path isn't a serious submission. The service ships with
+the cheap, high-value hardening you'd want behind a real endpoint: **structured JSON logging**
+(one object per line with `request_id`, mode, routing, and latency), a Prometheus **`/metrics`**
+endpoint for Nebius Managed Prometheus to scrape, and a `/health` probe that actively checks
+vLLM so the readiness signal is truthful. On the security side: secrets load by reference from
+**Nebius Mysterybox** (no plaintext in the deploy spec), a body-size limit returns **HTTP 413**
+and a per-request deadline returns **HTTP 504** as DoS guards, and `presigned_url` fetches are
+restricted by an **SSRF allowlist**. For reliability, `start.sh` supervises vLLM in a
+restart-on-crash loop while uvicorn stays PID 1 so the port — and `/health` — stay up through a
+backend blip. The full pillar-by-pillar rationale is in [WELL-ARCHITECTED.md](WELL-ARCHITECTED.md).
 
 ## Try It
 
 The full source, blueprints, eval scripts, and smoke tests are on GitHub: [docs-proc-nebius](https://github.com/dsadchikov/docs-proc-nebius).
 
 To run locally in mock mode: `docker compose -f docker-compose.cpu.yml up --build` — no GPU required.
+
+📹 **Video walkthrough:** <!-- TODO: add public 3–10 min video link before submission -->
+
+**See it in action:** the [Proof of Execution](https://github.com/dsadchikov/docs-proc-nebius#proof-of-execution) section in the README links the live endpoint, sample recognition results, and the eval report.
+
+<!-- TODO: capture a real /demo screenshot/GIF before submission (commit with git add -f images/demo-screenshot.png) -->
+![Demo UI](images/demo-screenshot.png)
 
 ---
 
