@@ -33,6 +33,11 @@ extractor.py                      blueprint_loader.py
    – logprobs for per-field confidence
 ```
 
+<!-- images/ is gitignored; commit diagrams with: git add -f images/architecture-context.png images/architecture-containers.png images/architecture-components.png -->
+![C4 system context](images/architecture-context.png)
+![C4 container view](images/architecture-containers.png)
+![C4 component view (API Service)](images/architecture-components.png)
+
 **Deployment target:** Nebius Serverless GPU Endpoint (1× H100 SXM, 16 vCPU, 200 GB RAM).  
 **Standalone mode:** Same image runs CPU-only with `MOCK_VLLM=1` for integration tests.
 
@@ -86,7 +91,7 @@ is `eu-north1` (S3 endpoint `https://storage.eu-north1.nebius.cloud`).
 ### 3. Build and push
 
 ```bash
-# On a Linux build machine with Docker (use your image tag, e.g. v29 — the current build)
+# On a Linux build machine with Docker (use your image tag, e.g. v30 — the current build)
 docker build -f nebius-endpoint/Dockerfile -t cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG> nebius-endpoint/
 docker push cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG>
 ```
@@ -361,7 +366,7 @@ Built-in blueprints: `passport`, `id_card`, `residence_permit_ltu_front`, `defau
 
 The eval job measures field-level accuracy on the public [MIDV-2020](https://smartengines.com/midv-2020/) synthetic dataset (60 documents, 3 document types).
 
-### Results (Qwen2.5-VL-7B-Instruct, v29, H100 SXM)
+### Results (Qwen2.5-VL-7B-Instruct, v30, H100 SXM)
 
 **Per-field accuracy (exact match after normalization):**
 
@@ -387,7 +392,9 @@ The eval job measures field-level accuracy on the public [MIDV-2020](https://sma
 
 \* Greek-script fields (Σ, Α, Ν...) are rendered correctly in MRZ but the model transcribes the Cyrillic/Latin approximation rather than the exact Unicode string — a known VLM limitation for polytonic Greek.
 
-**Confidence calibration:**
+**Confidence calibration** (measured on the pre-fix v29 eval job; the v30 logprob
+byte-decode fix changes which fields report `logprobs` vs `response_mean`, so these
+figures should be re-measured against v30 when the eval artifacts are captured):
 - Mean confidence on correct extractions: **98.2**
 - Mean confidence on incorrect extractions: **92.7**
 - Calibration gap: **5.5 pp** (model is slightly overconfident on errors — expected for a 7B VLM)
@@ -417,9 +424,11 @@ docker run --rm \
 
 Results are written to `eval/results/<job_id>/` in NOS and a summary report to `eval/reports/<job_id>.json`.
 
-The eval is itself a **Nebius Serverless Job** (`nebius-job/`) that reuses the same image as
-the endpoint, so the submission exercises both Nebius Serverless products — the Endpoint
-(live `/recognize`) and Jobs (batch evaluation).
+The eval harness (`nebius-job/`) reuses the **same Docker image and code path** as the
+endpoint and is fully env-driven, so it's shaped to run as a **Nebius Serverless Job**. Today
+it runs as a container against the live endpoint; packaging it as a Serverless Job is the next
+step on the roadmap. This submission's Serverless product in production is the **Endpoint**
+(live `/recognize`).
 
 ---
 
@@ -427,15 +436,16 @@ the endpoint, so the submission exercises both Nebius Serverless products — th
 
 Captured artifacts from a live run, for judges to verify the service end-to-end:
 
-- **Live endpoint / demo:** `<TODO: public endpoint URL>` → `/demo` <!-- TODO: add live URL + judge Bearer token note before submission -->
-- **Sample recognition results** (≥2 distinct document types):
-  - `samples/recognize_srb_passport.json` <!-- TODO: capture from a live POST /recognize run before submission -->
-  - `samples/recognize_esp_id.json` <!-- TODO: capture from a live POST /recognize run before submission -->
-- **Evaluation summary report (job logs):** `samples/eval_report.json` <!-- TODO: copy eval/reports/<job_id>.json from a live Job run before submission -->
+- **Live endpoint / demo:** `<TODO: public endpoint URL>` → `/demo` <!-- TODO: endpoints are deleted between sessions to save cost (see CLAUDE.md); redeploy via INTERNAL-RUNBOOK.md and paste the fresh URL + judge Bearer token note right before submission -->
+- **Sample recognition results** (≥2 distinct document types, captured live against `v31` on 2026-06-18):
+  - `samples/recognize_srb_passport.json` — `mode=auto`
+  - `samples/recognize_esp_id.json` — `mode=auto`
+  - `samples/recognize_srb_passport_blueprint.json` — `mode=blueprint` (matches eval job methodology; full field set incl. MRZ)
+  - `samples/recognize_esp_id_blueprint.json` — `mode=blueprint` (matches eval job methodology; full field set incl. MRZ)
+- **Evaluation summary report:** `samples/eval_report.json` <!-- TODO: copy eval/reports/<job_id>.json from a live eval run before submission; S3 read access to eval/reports/ needs verifying — denied with current local creds as of 2026-06-18 -->
 
-See [`samples/README.md`](samples/README.md) for the exact capture commands. These files
-are committed once captured against the live endpoint — this sandbox has no live GPU
-endpoint to produce them.
+See [`samples/README.md`](samples/README.md) for the exact capture commands and a note on why
+both `auto` and `blueprint` variants are included.
 
 ---
 
@@ -448,10 +458,13 @@ Measured on a single H100 SXM endpoint, 60 documents, `mode=blueprint`:
 | Latency p50 | 1.84 s/doc |
 | Latency p95 | 2.34 s/doc |
 | Total for 60 docs | 124 s |
-| GPU cost (H100 SXM @ $2.80/hr) | ~$0.001/doc |
-| **1 000 docs (projected)** | **~$1.00** |
+| GPU cost (H100 SXM @ $2.80/hr) | ~$0.001/doc (marginal, during batch) |
+| **1 000 docs (projected)** | **~$1.00** (marginal compute only) |
 
-Nebius Serverless GPU Endpoints are billed per second of compute — no idle charges between requests.
+The ~$0.001/doc is the **marginal** processing cost during the batch — it does not include
+warm-up or the idle seconds while the endpoint is up. Nebius Serverless GPU Endpoints are
+billed per second **while running**, with **no charge while stopped** — so the real saving for
+a bursty workload comes from stopping the endpoint between bursts, not from per-request billing.
 
 ---
 

@@ -110,8 +110,9 @@ with Nebius Object Storage (NOS) for blueprints, inbound uploads, and results.
   ~$1 per 1,000 docs at the measured latency.
 - **Right-sized disk** — `--disk-size 80Gi` (model ~20 GB + headroom) instead of the 250Gi default,
   cutting idle storage cost.
-- **Same image, live and batch** — the endpoint and the MIDV-2020 evaluation **Job** share one
-  image and code path, avoiding a second artifact to build and pay for.
+- **Same image, live and batch** — the endpoint and the MIDV-2020 evaluation harness share one
+  image and code path (the harness is shaped to run as a Serverless Job — that's the next step),
+  avoiding a second artifact to build and pay for.
 - **Stop-when-idle** — the endpoint is stopped between sessions; per-second billing means no idle
   compute charge.
 
