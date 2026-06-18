@@ -102,9 +102,29 @@ The honest part. The endpoint did not come up on the first try — or the second
 
 None of these are in the docs in one place; all three are the kind of thing you only learn by deploying.
 
+Once it came up, the proof is mundane and exactly what matters: the Nebius console showing the endpoint `Running` on an H100, not just our own app claiming so.
+
+![The Nebius console, Instances view, Serverless tab: the endpoint Running on NVIDIA H100 NVLink, 1 GPU / 16 vCPUs / 200 GiB.](images/console-endpoint-running.png)
+
 ## Evaluating on MIDV-2020
 
 We ran 60 documents across three types — Spanish national ID, Greek passport, Serbian passport — through the live endpoint with `mode=blueprint`. `document_number` came back at 100%; `surname` at 65%; the dates lagged at 33%. The dates were a red herring: MIDV stores them as `DD.MM.YYYY` and the model emits `YYYY-MM-DD`. The right fix was to **normalize at the metric layer, not the prompt** — normalizing both sides to `YYYYMMDD` took dates from 0% to 33% without touching the prompt. Greek-script fields dragged the Greek passport down to 25%, because a 7B model approximates polytonic Greek rather than transcribing it exactly — a known model-size limitation, not a pipeline bug.
+
+## Default vs. blueprint: a Spanish ID walkthrough
+
+The `surname` numbers above hide a structural problem that's easier to see than to describe, so here's one document carried through all three modes.
+
+First, the same Spanish national ID (`DOCUMENTO NACIONAL DE IDENTIDAD`) run with no blueprint at all — `mode=auto` against the built-in catch-all schema. It classifies correctly and extracts cleanly, but the schema is generic: one `full_name` field holding `ROBERTO CORONADO VALVERDE`.
+
+![The /demo UI recognizing a Spanish DNI in default/catch-all mode: generic fields including a single full_name "ROBERTO CORONADO VALVERDE", doc confidence 94.](images/demo-esp-id-default.png)
+
+Spanish IDs print two surnames — *primer apellido* and *segundo apellido* — as separate, legally distinct fields; a generic `full_name` string can't express that structure, and a downstream KYC check that matches against "surname" alone would be matching the wrong substring. So we pointed the **"Generate blueprint from document"** feature at this same image: two VLM passes draft a document-specific schema — `first_surname`, `second_surname`, `dni_number`, and the rest — which we then select and reuse with no redeploy.
+
+Recognizing the *same image again*, now in `mode=blueprint` against that generated schema, the surname splits correctly and a Spain-specific `dni_number` field appears:
+
+![The /demo UI recognizing the same Spanish DNI in blueprint mode, using the generated schema: first_surname "CORONADO", second_surname "VALVERDE", dni_number "77748718L", doc confidence 99.](images/demo-esp-id-blueprint.png)
+
+That's the case for blueprints in one document: the catch-all schema is good enough to classify and triage anything, but matching a specific document's structure — two surnames, a national ID number, a country-specific MRZ layout — takes a blueprint generated (and reviewed) for that document type.
 
 ## Performance and cost
 
@@ -141,7 +161,17 @@ This submission is a working, honest slice. The path to a production MVP is mapp
 
 The full source, blueprints, eval scripts and smoke tests are on GitHub: [docs-proc-nebius](https://github.com/dsadchikov/docs-proc-nebius). To run locally in mock mode with no GPU: `docker compose -f docker-compose.cpu.yml up --build`. The [Proof of Execution](https://github.com/dsadchikov/docs-proc-nebius#proof-of-execution) section links the live endpoint, sample recognition results, and the eval report.
 
-<!-- TODO before publishing: add a 3–10 min video walkthrough link. -->
+**Demo video — coming soon.**
+
+---
+
+## One last question
+
+KYC document capture isn't always done by someone paying attention. So: what should the system do when a user, asked for their passport, photographs the *cover* instead of the data page?
+
+![The /demo UI after recognizing a photo of a US passport's navy cover instead of its data page: every substantive field is null, only "PASSPORT" and "USA" are guessed from the cover text, doc confidence 23.](images/demo-passport-cover-escalate.png)
+
+`routing: escalate_to_operator`. No field is fabricated to fill the gap — `document_number`, `surname`, every date come back `null` rather than guessed, and the low document confidence (23) routes the case to a human instead of auto-approving a passport with no extracted identity. That's the confidence-router doing exactly its job: when the evidence isn't there, say so and hand off, don't pretend.
 
 ---
 

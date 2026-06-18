@@ -13,7 +13,7 @@ venv/
 .DS_Store
 INTERNAL-RUNBOOK.md
 internal-docs/
-presentations/
+presentation/
 CLAUDE.md
 
 # Local-only specs (.kiro): contain internal references — kept out of the public repo
@@ -22,5 +22,7 @@ CLAUDE.md
 # Local-only Claude Code / kfc spec-workflow tooling (incl. .claude/specs -> .kiro symlink)
 .claude/
 
-# Source MIDV-2020 delivery (curated subset lives in app/static/samples/)
-/images/
+# Source MIDV-2020 delivery (curated subset lives in app/static/samples/) — raw images/annotations only;
+# diagrams and blog screenshots (*.png) in images/ are tracked.
+/images/*.jpg
+/images/*.json
