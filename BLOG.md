@@ -119,9 +119,9 @@ Nebius Serverless GPU Endpoints are billed per second of active compute with no 
 
 The H100 SXM handles `Qwen2.5-VL-7B-Instruct` comfortably: model loads in under 2 minutes, inference is ~1.5s/doc at full resolution, and the endpoint scales horizontally if needed.
 
-## What We Learned
+## What We Learned 
 
-**Blueprint prompt engineering is more fragile than it looks.** We tried adding "STRICTLY return YYYY-MM-DD or null" to date instructions and "use Latin script only" for surname. The first caused the model to return null for any date it wasn't certain about (date_of_issue dropped from 55% to 37%). The second caused it to prefer MRZ-format surnames over printed names (surname dropped from 65% to 50%). The lesson: for 7B VLMs, conservative prompts outperform precise ones. More instruction → more constraint → more ways to go wrong.
+**Blueprint prompt engineering is more fragile than it looks.** We tried adding "STRICTLY return YYYY-MM-DD or null" to date instructions and "use Latin script only" for surname. The first caused the model to return null for any date it wasn't certain about (date_of_issue dropped from 55% to 37%). The second caused it to prefer MRZ-format surnames over printed names (surname dropped from 65% to 50%). The lesson: for 7B VLMs, conservative prompts outperform precise ones. More instruction → more constraint →  more ways to go wrong.
 
 **Normalize at the metric layer, not the prompt layer.** Format variation (date formats, separator characters in personal numbers) should be handled in your evaluation code, not by making your prompts more prescriptive. The model already knows dates; it just formats them consistently in its own way.
 
