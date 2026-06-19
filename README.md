@@ -4,6 +4,7 @@
 
 📹 **Video walkthrough:** <!-- TODO: add public 3–10 min video link before submission -->
 🔎 **Proof of execution:** see [Proof of Execution](#proof-of-execution) (live endpoint URL, sample results, eval report).
+🚀 **Deploying it yourself?** See [DEPLOYMENT.md](DEPLOYMENT.md) for the full step-by-step guide (prerequisites, browser auth, disk space, deploy/teardown scripts, timing).
 
 Runs on a Nebius GPU endpoint (H100 SXM) with [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) via vLLM. Extracts structured fields from identity documents, with per-field confidence from vLLM logprobs, JSON schema enforcement (guided decoding), multi-page PDF support, and a browser-based demo UI — all behind a FastAPI (uvicorn) app with NOS-backed blueprints.
 
@@ -60,6 +61,10 @@ extractor.py                      blueprint_loader.py
 ---
 
 ## Quick Start — Deploy From Scratch
+
+> For full detail (browser auth on headless hosts, disk space sizing, timing
+> breakdown, teardown) see [DEPLOYMENT.md](DEPLOYMENT.md). This section is the
+> short version.
 
 ### Prerequisites
 
