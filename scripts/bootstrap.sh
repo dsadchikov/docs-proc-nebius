@@ -247,8 +247,18 @@ AUTH_TOKEN="${AUTH_TOKEN:-$(openssl rand -hex 32)}"
 IAMTOK=$(nebius iam get-access-token)   # minted fresh, right before create — short-lived
 
 echo "[bootstrap] creating endpoint '$ENDPOINT_NAME'"
+# NOTE: we deliberately do NOT try to parse this call's own stdout as JSON.
+# Observed live: `nebius ai ... create --format json` waits synchronously on
+# the underlying operation, and for long waits it can interleave plain-text
+# progress ("waiting for operation ... to complete") with the final JSON on
+# stdout — breaking a naive `$(cmd) | python3 -c json.load`. It can also fail
+# CLIENT-SIDE (e.g. an auth session expiring mid-wait) even though the request
+# already went through SERVER-SIDE and the endpoint is provisioning/RUNNING.
+# Both cases are handled the same way: ignore this call's own output/exit code
+# and resolve the canonical state afterward via list-by-name + get, which are
+# fast, non-blocking calls that reliably return clean JSON.
 set +e
-ENDPOINT_JSON=$(nebius ai endpoint create \
+nebius ai endpoint create \
   --name "$ENDPOINT_NAME" \
   --image "$IMAGE" \
   --container-port 8080 \
@@ -267,48 +277,86 @@ ENDPOINT_JSON=$(nebius ai endpoint create \
   --env S3_ENDPOINT="$S3_ENDPOINT" \
   --registry-username iam \
   --registry-password "$IAMTOK" \
-  --parent-id "$PROJECT_ID" \
-  --format json)
+  --parent-id "$PROJECT_ID"
 CREATE_EXIT=$?
 set -e
-
 if [ "$CREATE_EXIT" -ne 0 ]; then
-  # Observed live: `endpoint create` can fail CLIENT-SIDE (e.g. auth session
-  # expiring while it polls for the result) even though the request already
-  # went through SERVER-SIDE and the endpoint is provisioning or RUNNING.
-  # Don't assume failure — look for it by name before giving up.
-  echo "[bootstrap] 'endpoint create' returned an error locally — checking whether it actually succeeded server-side..."
-  EXISTING=$(nebius ai endpoint list --parent-id "$PROJECT_ID" --format json | python3 -c "
+  echo "[bootstrap] 'endpoint create' reported an error locally (exit=$CREATE_EXIT) — checking whether it"
+  echo "[bootstrap]   actually succeeded server-side anyway before giving up..."
+fi
+
+ENDPOINT_ID=$(nebius ai endpoint list --parent-id "$PROJECT_ID" --format json | python3 -c "
 import sys, json
 name = '$ENDPOINT_NAME'
 for e in json.load(sys.stdin).get('items', []):
     if e['metadata']['name'] == name:
         print(e['metadata']['id']); break
 ")
-  if [ -n "$EXISTING" ]; then
-    echo "[bootstrap] found it: ENDPOINT_ID=$EXISTING already exists (created despite the client-side error)."
-    echo "[bootstrap] NOTE: the AUTH_TOKEN this script generated for this run was NOT confirmed delivered —"
-    echo "[bootstrap]   check the env vars on the live resource yourself:"
-    echo "[bootstrap]   nebius ai endpoint get $EXISTING --format json"
-    ENDPOINT_ID="$EXISTING"
-  else
-    echo "[bootstrap] not found — it really did fail. Re-run this script (build/push/upload above are"
-    echo "[bootstrap]   already done and will be skipped or fast on a re-run)."
-    exit 1
-  fi
-else
-  ENDPOINT_ID=$(echo "$ENDPOINT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['metadata']['id'])")
+
+if [ -z "$ENDPOINT_ID" ]; then
+  echo "[bootstrap] endpoint '$ENDPOINT_NAME' was not found — it really did fail."
+  echo "[bootstrap] Re-run this script (build/push/upload above are already done and will be"
+  echo "[bootstrap]   skipped or fast on a re-run)."
+  exit 1
 fi
+echo "[bootstrap] ENDPOINT_ID=$ENDPOINT_ID"
+ENDPOINT_JSON=$(nebius ai endpoint get "$ENDPOINT_ID" --format json)
+
+# Public IP is often allocated at provisioning time, before the container is
+# RUNNING — try to read it now so the summary below is immediately usable;
+# fall back to "not yet" if the platform hasn't assigned one in this response.
+PUBLIC_ENDPOINT=$(echo "$ENDPOINT_JSON" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+eps = d.get('status', {}).get('public_endpoints', [])
+print(eps[0] if eps else '')
+")
+ENDPOINT_STATE=$(echo "$ENDPOINT_JSON" | python3 -c "
+import sys, json
+print(json.load(sys.stdin).get('status', {}).get('state', 'UNKNOWN'))
+")
 
 phase "done"
 echo "[bootstrap] total elapsed: ${SECONDS}s"
-echo "[bootstrap] ENDPOINT_ID=$ENDPOINT_ID — waiting for it to come up (this can take several minutes: image pull + vLLM weight load)"
-echo "[bootstrap] poll with: nebius ai endpoint get $ENDPOINT_ID --format json"
 echo ""
-echo "[bootstrap] Once state is RUNNING, smoke test with:"
-echo "  export NEBIUS_ENDPOINT_URL=\"http://<PUBLIC_IP>:8080\""
+echo "════════════════════════════════════════════════════════════════"
+echo "[bootstrap] SUMMARY — everything needed to use or clean up this deploy"
+echo "════════════════════════════════════════════════════════════════"
+echo "  ENDPOINT_ID    = $ENDPOINT_ID"
+echo "  ENDPOINT_STATE = $ENDPOINT_STATE"
+if [ -n "$PUBLIC_ENDPOINT" ]; then
+  echo "  PUBLIC_URL     = http://$PUBLIC_ENDPOINT"
+else
+  echo "  PUBLIC_URL     = (not yet assigned — poll: nebius ai endpoint get $ENDPOINT_ID --format json)"
+fi
+echo "  AUTH_TOKEN     = $AUTH_TOKEN"
+echo "  PROJECT_ID     = $PROJECT_ID"
+echo "  REGISTRY_ID    = $REGISTRY_ID"
+echo "  BUCKET         = $BUCKET"
+echo "  BUCKET_ID      = $BUCKET_ID"
+echo "  SA_ID          = $SA_ID"
+echo "  GROUP_ID       = $GROUP_ID"
+echo "  ACCESS_KEY_ID  = $KEY_ID"
+echo "  S3_ACCESS_KEY  = $S3_ACCESS_KEY"
+echo "  S3_SECRET_KEY  = $S3_SECRET_KEY"
+echo "  S3_ENDPOINT    = $S3_ENDPOINT"
+echo "  S3_REGION      = $S3_REGION"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+if [ -n "$PUBLIC_ENDPOINT" ] && [ "$ENDPOINT_STATE" = "RUNNING" ]; then
+  echo "[bootstrap] Endpoint is RUNNING. Smoke test now:"
+else
+  echo "[bootstrap] Endpoint is still coming up (image pull + vLLM weight load can take"
+  echo "[bootstrap]   several minutes). Poll with the command above, then smoke test:"
+fi
+echo "  export NEBIUS_ENDPOINT_URL=\"http://${PUBLIC_ENDPOINT:-<PUBLIC_IP>:8080}\""
 echo "  export NEBIUS_ENDPOINT_TOKEN=\"$AUTH_TOKEN\""
 echo "  export NEBIUS_ENDPOINT_ID=\"$ENDPOINT_ID\""
 echo "  bash nebius-endpoint/smoke_test.sh"
 echo ""
-echo "[bootstrap] AUTH_TOKEN for this endpoint: $AUTH_TOKEN"
+echo "[bootstrap] To tear everything in this run down later:"
+echo "  ENDPOINT_ID=$ENDPOINT_ID BUCKET=$BUCKET BUCKET_ID=$BUCKET_ID \\"
+echo "  S3_ACCESS_KEY=$S3_ACCESS_KEY S3_SECRET_KEY=$S3_SECRET_KEY \\"
+echo "  S3_ENDPOINT=$S3_ENDPOINT S3_REGION=$S3_REGION \\"
+echo "  ACCESS_KEY_ID=$KEY_ID SA_ID=$SA_ID GROUP_ID=$GROUP_ID REGISTRY_ID=$REGISTRY_ID \\"
+echo "  PROJECT_ID=$PROJECT_ID bash scripts/cleanup-bootstrap.sh"

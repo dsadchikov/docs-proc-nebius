@@ -104,7 +104,19 @@ by name) and does, in order:
    catalog-listed entries), so the script writes the catalog explicitly.
 8. Deploys the GPU endpoint (`gpu-h100-sxm`, 1×, with the registry credentials Nebius now
    requires explicitly on every `endpoint create` — see the deploy incident log in `CLAUDE.md`
-   if curious why) and prints its ID, public URL, and a freshly generated `AUTH_TOKEN`.
+   if curious why), then prints a summary block with everything needed to use or tear down
+   the deploy: `ENDPOINT_ID`, public URL (extracted automatically — no manual IP lookup),
+   `AUTH_TOKEN`, and every other resource ID (`PROJECT_ID`, `REGISTRY_ID`, `BUCKET`/`BUCKET_ID`,
+   `SA_ID`, `GROUP_ID`, `ACCESS_KEY_ID`, S3 credentials), plus ready-to-paste smoke-test and
+   teardown commands.
+
+The script also checks that you're actually logged in **before** starting, and again right
+before this final step (a `docker build` with a fresh model download can take 10-15+ minutes —
+long enough for a login session to expire mid-run; see
+[Project setup](#project-setup-project-network-and-subnet) if you hit this). If `endpoint
+create` reports a local error, the script doesn't give up — it looks the endpoint up by name
+afterward, since the request can succeed server-side even when the CLI's own wait/parse fails
+client-side (observed live).
 
 Override any default via env vars at the top of `scripts/bootstrap.sh` — for example
 `NAME_PREFIX` (resource naming), `PROJECT_NAME` (if using `TENANT_ID`), `STORAGE_PROJECT_ID`
@@ -121,19 +133,44 @@ subnet — common in multi-project tenancies; see
 
 ### Smoke test
 
-Once the endpoint reaches `RUNNING` (`nebius ai endpoint get <ENDPOINT_ID> --format json` —
-can take a few minutes: image pull + vLLM weight load):
+`bootstrap.sh`'s final summary block already gives you the export commands with real values
+filled in — copy-paste them. If the endpoint wasn't `RUNNING` yet when the script finished,
+poll with the printed `nebius ai endpoint get <ENDPOINT_ID> --format json` command (image pull
++ vLLM weight load can take a few minutes), then:
 
 ```bash
 export NEBIUS_ENDPOINT_URL="http://<PUBLIC_IP>:8080"
-export NEBIUS_ENDPOINT_TOKEN="<AUTH_TOKEN printed by bootstrap.sh>"
-export NEBIUS_ENDPOINT_ID="<ENDPOINT_ID printed by bootstrap.sh>"
+export NEBIUS_ENDPOINT_TOKEN="<AUTH_TOKEN from the summary block>"
+export NEBIUS_ENDPOINT_ID="<ENDPOINT_ID from the summary block>"
 bash nebius-endpoint/smoke_test.sh
 ```
 
 All 35 tests should pass. Expected output ends with `35 passed  0 failed`. (Verified end-to-end
-against a live tenancy on 2026-06-18 — every command in `bootstrap.sh` was run for real, not
-just written from docs.)
+against a live tenancy on 2026-06-18 and again on 2026-06-19 via the `TENANT_ID` path — every
+command in `bootstrap.sh` was run for real on srv55, not just written from docs.)
+
+### Tear down
+
+`scripts/cleanup-bootstrap.sh` removes everything a `bootstrap.sh` run created. It resolves
+every resource by the same naming convention `bootstrap.sh` uses, so you only need to know
+`PROJECT_ID` and `NAME_PREFIX` (not hunt down individual IDs):
+
+```bash
+PROJECT_ID=<the project bootstrap.sh deployed into> \
+NAME_PREFIX=<the NAME_PREFIX you used, default docs-proc> \
+DELETE_PROJECT=1 \
+bash scripts/cleanup-bootstrap.sh
+```
+
+Deletes, in order (endpoint first to stop GPU billing immediately, project last): the
+endpoint, the bucket's contents + the bucket itself, every access key issued for the service
+account (re-running `bootstrap.sh` issues a new one each time, so there may be more than one),
+the service account, the IAM group, every image in the registry + the registry itself
+(`registry delete` fails if any image is left), and finally — best-effort — the project. As of
+the CLI version this was built against (v0.12.223), `nebius iam project` has **no `delete`
+subcommand at all**; if that's still true for you, delete the project via
+[console.nebius.com](https://console.nebius.com) instead, or just leave it (an empty project
+with nothing inside it isn't billed).
 
 ### Project setup: project, network, and subnet
 
@@ -161,6 +198,15 @@ creation is asynchronous, so re-run `./scripts/bootstrap.sh` once `nebius vpc su
 Storage (NOS bucket, service account, access key) and compute (subnet, GPU endpoint,
 registry) don't have to live in the same Nebius project — some tenancies separate them. Set
 `STORAGE_PROJECT_ID` if yours does; it defaults to `PROJECT_ID`.
+
+**Login session expiring mid-run.** A federated CLI login session has been observed live to
+expire during the ~10-15 minute `docker build` (base image pull + model weight download) —
+long enough to outlast a short-lived session token. `bootstrap.sh` checks login at the start
+and again right before the final `endpoint create`; if it tells you the session expired, run
+`nebius iam whoami` yourself, open the printed auth link in a browser (`ssh -L
+<port>:localhost:<port>` to the printed port if your build machine is headless), then re-run
+`bootstrap.sh` — the build/push/upload steps already done will be skipped or fast on the
+re-run.
 
 ### Alternative: Terraform
 
