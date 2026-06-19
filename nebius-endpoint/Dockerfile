@@ -1,4 +1,8 @@
-FROM cr.eu-north1.nebius.cloud/e00h8fpjyqj1jdednb/base:v2
+# syntax=docker/dockerfile:1.7
+# Public upstream vLLM image (Docker Hub) — replaces a private, project-internal
+# base image so this Dockerfile builds standalone for anyone (contest reproducibility).
+FROM vllm/vllm-openai:v0.9.1
+ENV HF_HUB_OFFLINE=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx poppler-utils && rm -rf /var/lib/apt/lists/*
@@ -9,8 +13,11 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Download model weights at build time — avoids HF download on every cold start.
 # HF_HUB_DISABLE_XET=1 uses plain HTTPS instead of the US-based xet CDN
 # (which has SSL issues from Nebius EU-North1).
-ARG HF_TOKEN=""
-RUN HF_HUB_DISABLE_XET=1 HF_TOKEN=${HF_TOKEN} python3 -c "\
+# Qwen2.5-VL-7B-Instruct is not gated, so HF_TOKEN is optional. Passed via a
+# BuildKit secret mount (not --build-arg) so it never persists in image history
+# for anyone who does set one.
+RUN --mount=type=secret,id=hf_token \
+    HF_HUB_DISABLE_XET=1 HF_TOKEN=$(cat /run/secrets/hf_token 2>/dev/null || true) python3 -c "\
 import os; \
 from huggingface_hub import snapshot_download; \
 snapshot_download( \
