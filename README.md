@@ -59,94 +59,116 @@ extractor.py                      blueprint_loader.py
 
 ---
 
-## Quick Start — Nebius GPU Endpoint
+## Quick Start — Deploy From Scratch
 
-### 1. Prerequisites
+### Prerequisites
 
 - [Nebius CLI](https://docs.nebius.com/cli/) configured (`nebius iam whoami` works)
-- Docker registry in your Nebius project
+- Docker, `python3` with `boto3` (`pip install boto3` if not already present)
+- A Nebius project: either pass `PROJECT_ID` for one you already have (every tenant gets
+  an auto-created default project at signup — list yours with `nebius iam project list
+  --parent-id <tenant-id>`), or pass `TENANT_ID` instead and `bootstrap.sh` creates a
+  dedicated project for you (`nebius iam tenant list` shows your tenant ID). See
+  [Project setup](#project-setup-project-network-and-subnet) below for both paths, and a
+  permissions note if you use `TENANT_ID`.
 
-### 2. Provision storage and credentials
-
-Create a Nebius Object Storage (NOS) bucket for blueprints and a static S3 key the
-endpoint uses to read/write it:
-
-```bash
-# Create the NOS bucket (one-time)
-nebius storage bucket create \
-  --name <YOUR_NOS_BUCKET> \
-  --parent-id <PROJECT_ID>
-
-# Issue a static S3 access key for a service account
-# (scripts/setup-iam.sh provisions a least-privilege SA scoped to this bucket)
-nebius iam service-account static-key create \
-  --service-account-id <SA_ID> \
-  --format json
-```
-
-The command prints `S3_ACCESS_KEY` / `S3_SECRET_KEY` — store them in Nebius Mysterybox
-(see `scripts/setup-iam.sh`) and pass them to the endpoint in step 5. The bucket region
-is `eu-north1` (S3 endpoint `https://storage.eu-north1.nebius.cloud`).
-
-### 3. Build and push
+### One command
 
 ```bash
-# On a Linux build machine with Docker (use your image tag, e.g. v30 — the current build)
-docker build -f nebius-endpoint/Dockerfile -t cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG> nebius-endpoint/
-docker push cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG>
+git clone https://github.com/dsadchikov/docs-proc-nebius.git
+cd docs-proc-nebius
+PROJECT_ID=<your-project-id> ./scripts/bootstrap.sh
+# — or, to have the script create a dedicated project for you —
+TENANT_ID=<your-tenant-id> ./scripts/bootstrap.sh
 ```
 
-### 4. Upload blueprints to NOS
+This single script takes a fresh Nebius account to a running, GPU-backed endpoint. It is
+**idempotent** for the provisioning steps (safe to re-run; existing resources are reused
+by name) and does, in order:
 
-```bash
-# Upload built-in blueprints so the endpoint can pull them
-for bp in nebius-endpoint/blueprints/*/v1.json; do
-  type=$(basename $(dirname $bp))
-  aws s3 cp "$bp" \
-    "s3://<YOUR_NOS_BUCKET>/blueprints/${type}/v1.json" \
-    --endpoint-url https://storage.eu-north1.nebius.cloud
-done
-```
+0. If `PROJECT_ID` wasn't given, finds or creates a project under `TENANT_ID` — see
+   [Project setup](#project-setup-project-network-and-subnet) for the permissions this needs.
+1. Finds (or creates) a subnet in `PROJECT_ID` — see [Project setup](#project-setup-project-network-and-subnet) if none exists yet.
+2. Finds or creates a container registry.
+3. Finds or creates a NOS (Object Storage) bucket for blueprints.
+4. Finds or creates a least-privilege service account, puts it in an IAM group, and grants
+   that group `storage.editor` on the bucket only (Nebius requires the access-permit subject
+   to be a Group, not a service account directly — `scripts/setup-iam.sh` has the same logic
+   if you want it standalone).
+5. Issues a fresh S3-compatible access key for that service account.
+6. Builds the Docker image (`nebius-endpoint/Dockerfile`, fully self-contained — no private
+   base image) and pushes it to the registry.
+7. Uploads the four built-in blueprints **plus a generated `_catalog.json` index** — uploading
+   the blueprint files alone works at first boot but silently breaks after the first
+   create/update/delete/reload call (the catalog-based loader takes over and only knows about
+   catalog-listed entries), so the script writes the catalog explicitly.
+8. Deploys the GPU endpoint (`gpu-h100-sxm`, 1×, with the registry credentials Nebius now
+   requires explicitly on every `endpoint create` — see the deploy incident log in `CLAUDE.md`
+   if curious why) and prints its ID, public URL, and a freshly generated `AUTH_TOKEN`.
 
-### 5. Deploy endpoint
+Override any default via env vars at the top of `scripts/bootstrap.sh` — for example
+`NAME_PREFIX` (resource naming), `PROJECT_NAME` (if using `TENANT_ID`), `STORAGE_PROJECT_ID`
+(if your bucket/SA should live in a different project than the one that owns the compute
+subnet — common in multi-project tenancies; see
+[Project setup](#project-setup-project-network-and-subnet)), `IMAGE_TAG`, `DISK_SIZE`.
 
-```bash
-nebius ai endpoint create \
-  --name doc-recognition \
-  --image cr.eu-north1.nebius.cloud/<REGISTRY_ID>/endpoint:<TAG> \
-  --container-port 8080 \
-  --platform gpu-h100-sxm \
-  --preset 1gpu-16vcpu-200gb \
-  --disk-size 80Gi \
-  --shm-size 16Gi \
-  --subnet-id <SUBNET_ID> \
-  --public \
-  --auth none \
-  --env AUTH_TOKEN=<YOUR_AUTH_TOKEN> \
-  --env S3_ACCESS_KEY=<S3_ACCESS_KEY> \
-  --env S3_SECRET_KEY=<S3_SECRET_KEY> \
-  --env S3_BUCKET=<YOUR_NOS_BUCKET> \
-  --env S3_REGION=eu-north1 \
-  --env S3_ENDPOINT=https://storage.eu-north1.nebius.cloud \
-  --parent-id <PROJECT_ID>
-```
+> **Auth model:** the endpoint deploys with `--auth none` + an app-level `AUTH_TOKEN` (printed
+> at the end), not Nebius's own `--auth token`. Reason: Nebius's ingress-level token auth
+> requires a Bearer on *every* path, including `GET /demo`, which makes the browser demo
+> unusable (a page load can't carry an Authorization header, and CORS preflight requests don't
+> either). `--auth none` keeps `/demo`, `/static`, `/health` public while the app's own
+> `verify_token` protects `/recognize` and the blueprint APIs.
 
-> **Tip:** `scripts/deploy-endpoint.sh <tag>` wraps this command and loads secrets by reference from Nebius Mysterybox (`--env-secret`) instead of plaintext `--env`. Run it on the build VM.
+### Smoke test
 
-The command prints an `endpoint_id`. The Bearer token for requests is the `AUTH_TOKEN` you set above (enforced at the app layer by `verify_token`).
-
-> **Why `--auth none` + `AUTH_TOKEN`?** Nebius `--auth token` puts an ingress that requires a Bearer on *every* path, which blocks the browser demo (`GET /demo` and CORS preflight both 401). Deploying with `--auth none` keeps the ingress open so `/demo`, `/static`, and `/health` load in the browser, while the app's own `AUTH_TOKEN` protects `/recognize` and the blueprint APIs.
-
-### 6. Smoke test
+Once the endpoint reaches `RUNNING` (`nebius ai endpoint get <ENDPOINT_ID> --format json` —
+can take a few minutes: image pull + vLLM weight load):
 
 ```bash
 export NEBIUS_ENDPOINT_URL="http://<PUBLIC_IP>:8080"
-export NEBIUS_ENDPOINT_TOKEN="<TOKEN>"
-export NEBIUS_ENDPOINT_ID="<ENDPOINT_ID>"
+export NEBIUS_ENDPOINT_TOKEN="<AUTH_TOKEN printed by bootstrap.sh>"
+export NEBIUS_ENDPOINT_ID="<ENDPOINT_ID printed by bootstrap.sh>"
 bash nebius-endpoint/smoke_test.sh
 ```
 
-All 35 tests should pass. Expected output ends with `35 passed  0 failed`.
+All 35 tests should pass. Expected output ends with `35 passed  0 failed`. (Verified end-to-end
+against a live tenancy on 2026-06-18 — every command in `bootstrap.sh` was run for real, not
+just written from docs.)
+
+### Project setup: project, network, and subnet
+
+**Project.** Every Nebius tenant already has an auto-created default project, so you
+likely don't need `TENANT_ID` at all — `nebius iam project list --parent-id <tenant-id>`
+will show it (and any others) and you can pass its ID as `PROJECT_ID`. Set `TENANT_ID`
+instead only if you specifically want `bootstrap.sh` to provision a clean, dedicated
+project (named `PROJECT_NAME`, default `${NAME_PREFIX}-project`) rather than reuse an
+existing one — step 0 above finds-or-creates it by name, idempotently. **Permissions
+note:** if you set up the Nebius CLI the normal way (`nebius profile create`, browser
+login as yourself), you're authenticated as the tenant owner and already have full
+rights to create a project — `TENANT_ID` just works. This only becomes a problem if
+your CLI is instead authenticated as a narrowly-scoped **service account** (e.g. CI
+automation, or an invited tenant member with a limited role) — those can often `list`
+projects/tenants (read) but not `create` one (tenant-scoped write). If
+`nebius iam project create` fails with a permission error, either switch to your
+human/owner profile for this one step, or fall back to an existing `PROJECT_ID`.
+
+**Network and subnet.** If `PROJECT_ID` (whether passed directly or just created via
+`TENANT_ID`) is brand new and has no subnet, step 1 above creates a default network
+(`nebius vpc network create-default`) and exits, printing the new `NETWORK_ID` — subnet
+creation is asynchronous, so re-run `./scripts/bootstrap.sh` once `nebius vpc subnet list
+--parent-id $PROJECT_ID` shows a subnet.
+
+Storage (NOS bucket, service account, access key) and compute (subnet, GPU endpoint,
+registry) don't have to live in the same Nebius project — some tenancies separate them. Set
+`STORAGE_PROJECT_ID` if yours does; it defaults to `PROJECT_ID`.
+
+### Alternative: Terraform
+
+The commands above are also expressible as Nebius's first-party
+[Terraform provider](https://docs.nebius.com/terraform-provider) (`nebius_storage_bucket`,
+`nebius_iam_service_account`, etc.) if you prefer a declarative/state-tracked workflow over
+the bash script. This repo ships the bash version because it has no extra dependency beyond
+the Nebius CLI judges already need for the contest — no `.tf` files are included.
 
 ---
 

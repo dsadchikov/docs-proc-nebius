@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 #
-# deploy-endpoint.sh — one-command Nebius Serverless AI Endpoint deploy.
+# deploy-endpoint.sh — re-deploy onto ALREADY-PROVISIONED infra (registry,
+# bucket, SA, Mysterybox secret) using Nebius-native secret references.
 # RUN ON srv55 (the build VM where the Nebius CLI + Docker are installed).
+#
+# For a from-scratch deploy (no existing bucket/SA/registry/Mysterybox setup),
+# use `scripts/bootstrap.sh` instead — it provisions everything and takes
+# plaintext env vars, no Mysterybox dependency.
 #
 # Improves deploy repeatability (Operational Excellence) and adopts the
 # Nebius-native secrets path: secrets are passed by REFERENCE from Mysterybox
@@ -44,6 +49,12 @@ nebius iam get-access-token | docker login "$REGISTRY" --username iam --password
 #    env var KEY from the payload key KEY inside <selector>. Our Mysterybox keys
 #    (S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET, S3_ENDPOINT, S3_REGION) match the
 #    env var names. Add an AUTH_TOKEN payload key to $MB_SECRET (recommended).
+#
+# `--registry-username`/`--registry-password` are MANDATORY as of the v31 incident
+# (2026-06-18): Nebius's implicit same-project registry auth stopped working —
+# see the "Deploy incident log" in CLAUDE.md. Mint a fresh IAM token right before
+# create (it's short-lived).
+IAMTOK=$(nebius iam get-access-token)
 nebius ai endpoint create \
   --name "$NAME" \
   --image "$IMAGE" \
@@ -62,6 +73,8 @@ nebius ai endpoint create \
   --env-secret S3_ENDPOINT="$MB_SECRET" \
   --env-secret S3_REGION="$MB_SECRET" \
   --env METRICS_ENABLED=1 \
+  --registry-username iam \
+  --registry-password "$IAMTOK" \
   --parent-id "$PARENT_ID"
 
 echo "[deploy] done. Recover AUTH_TOKEN / URL with:"
