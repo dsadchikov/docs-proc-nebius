@@ -19,8 +19,8 @@
 # being written (not guessed from docs) — see internal-docs/ for the session
 # that did this verification if any flag ever needs re-checking.
 #
-# Live-verified 2026-06-19 end-to-end (incl. TENANT_ID path) — see CLAUDE.md
-# Reproducibility section for the two rough edges that run surfaced: a fresh
+# Live-verified 2026-06-19 end-to-end (incl. TENANT_ID path). Two rough edges
+# that run surfaced and that this script handles: a fresh
 # project's subnet may already exist (no async wait needed), and a federated
 # CLI session can expire mid-build on a long `docker build` — this script now
 # checks login before starting and again right before the final endpoint

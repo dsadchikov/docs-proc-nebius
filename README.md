@@ -2,8 +2,9 @@
 
 **Serverless document-recognition service** built for the [Nebius Serverless AI Builders Challenge](https://nebius.com/blog/posts/ai-builders-challenge).
 
-📹 **Video walkthrough:** <!-- TODO: add public 3–10 min video link before submission -->
+📹 **Video walkthrough:** _coming soon._
 🔎 **Proof of execution:** see [Proof of Execution](#proof-of-execution) (live endpoint URL, sample results, eval report).
+🚀 **Deploying it yourself?** See [DEPLOYMENT.md](DEPLOYMENT.md) for the full step-by-step guide (prerequisites, browser auth, disk space, deploy/teardown scripts, timing).
 
 Runs on a Nebius GPU endpoint (H100 SXM) with [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) via vLLM. Extracts structured fields from identity documents, with per-field confidence from vLLM logprobs, JSON schema enforcement (guided decoding), multi-page PDF support, and a browser-based demo UI — all behind a FastAPI (uvicorn) app with NOS-backed blueprints.
 
@@ -61,6 +62,10 @@ extractor.py                      blueprint_loader.py
 
 ## Quick Start — Deploy From Scratch
 
+> For full detail (browser auth on headless hosts, disk space sizing, timing
+> breakdown, teardown) see [DEPLOYMENT.md](DEPLOYMENT.md). This section is the
+> short version.
+
 ### Prerequisites
 
 - [Nebius CLI](https://docs.nebius.com/cli/) configured (`nebius iam whoami` works)
@@ -103,8 +108,8 @@ by name) and does, in order:
    create/update/delete/reload call (the catalog-based loader takes over and only knows about
    catalog-listed entries), so the script writes the catalog explicitly.
 8. Deploys the GPU endpoint (`gpu-h100-sxm`, 1×, with the registry credentials Nebius now
-   requires explicitly on every `endpoint create` — see the deploy incident log in `CLAUDE.md`
-   if curious why), then prints a summary block with everything needed to use or tear down
+   requires explicitly on every `endpoint create` — see [DEPLOYMENT.md](DEPLOYMENT.md) for
+   the rationale), then prints a summary block with everything needed to use or tear down
    the deploy: `ENDPOINT_ID`, public URL (extracted automatically — no manual IP lookup),
    `AUTH_TOKEN`, and every other resource ID (`PROJECT_ID`, `REGISTRY_ID`, `BUCKET`/`BUCKET_ID`,
    `SA_ID`, `GROUP_ID`, `ACCESS_KEY_ID`, S3 credentials), plus ready-to-paste smoke-test and
@@ -382,9 +387,7 @@ After upload, pass `{"type": "nebius_object", "value": "<nos_key>"}` in `/recogn
 
 Opens the browser demo UI. No auth required.
 
-<!-- TODO: capture a real /demo screenshot/GIF before submission. /images/ is gitignored,
-     so commit with: git add -f images/demo-screenshot.png -->
-![Demo UI](images/demo-screenshot.png)
+![Demo UI recognizing a Serbian passport — per-field values with confidence bars and a routing band](images/demo-recognition-result.png)
 
 ---
 
@@ -434,7 +437,11 @@ Built-in blueprints: `passport`, `id_card`, `residence_permit_ltu_front`, `defau
 
 The eval job measures field-level accuracy on the public [MIDV-2020](https://smartengines.com/midv-2020/) synthetic dataset (60 documents, 3 document types).
 
-### Results (Qwen2.5-VL-7B-Instruct, v30, H100 SXM)
+### Results (Qwen2.5-VL-7B-Instruct, H100 SXM)
+
+All figures below are taken directly from the committed eval report
+[`samples/eval_report.json`](samples/eval_report.json) (job `20260612_215719_7929fa`, 60 docs)
+so they're reproducible end-to-end — re-running the job against the same manifest yields this file.
 
 **Per-field accuracy (exact match after normalization):**
 
@@ -443,10 +450,10 @@ The eval job measures field-level accuracy on the public [MIDV-2020](https://sma
 | document_number | 100% |
 | nationality | 67% |
 | sex | 67% |
-| surname | 65% |
-| date_of_issue | 55% |
-| given_names | 53% |
-| personal_number | 45% |
+| given_names | 58% |
+| surname | 50% |
+| personal_number | 42% |
+| date_of_issue | 37% |
 | date_of_birth | 33% |
 | date_of_expiry | 33% |
 
@@ -454,18 +461,16 @@ The eval job measures field-level accuracy on the public [MIDV-2020](https://sma
 
 | Document type | Accuracy |
 |---|---|
-| `srb_passport` | 77% |
-| `esp_id` | 68% |
+| `srb_passport` | 76% |
+| `esp_id` | 60% |
 | `grc_passport` | 25%* |
 
 \* Greek-script fields (Σ, Α, Ν...) are rendered correctly in MRZ but the model transcribes the Cyrillic/Latin approximation rather than the exact Unicode string — a known VLM limitation for polytonic Greek.
 
-**Confidence calibration** (measured on the pre-fix v29 eval job; the v30 logprob
-byte-decode fix changes which fields report `logprobs` vs `response_mean`, so these
-figures should be re-measured against v30 when the eval artifacts are captured):
-- Mean confidence on correct extractions: **98.2**
-- Mean confidence on incorrect extractions: **92.7**
-- Calibration gap: **5.5 pp** (model is slightly overconfident on errors — expected for a 7B VLM)
+**Confidence calibration** (from the same eval job, on a 0–100 scale):
+- Mean confidence on correct extractions: **97.8** (n=284)
+- Mean confidence on incorrect extractions: **91.0** (n=216)
+- Calibration gap: **6.8 pp** (model is slightly overconfident on errors — expected for a 7B VLM)
 
 ### Running the eval job yourself
 
@@ -504,13 +509,22 @@ step on the roadmap. This submission's Serverless product in production is the *
 
 Captured artifacts from a live run, for judges to verify the service end-to-end:
 
-- **Live endpoint / demo:** `<TODO: public endpoint URL>` → `/demo` <!-- TODO: endpoints are deleted between sessions to save cost (see CLAUDE.md); redeploy via INTERNAL-RUNBOOK.md and paste the fresh URL + judge Bearer token note right before submission -->
+- **Live endpoint / demo:** the GPU endpoint is deployed on demand (stopped between runs to
+  save cost — the whole point of serverless), so there isn't a permanently-live URL. Reproduce
+  it in one command with [`scripts/bootstrap.sh`](scripts/bootstrap.sh) (see
+  [DEPLOYMENT.md](DEPLOYMENT.md)); the run prints the public `/demo` URL and a Bearer token.
+  The screenshot below is the endpoint `Running` on an H100 in the Nebius console.
+
+  ![Nebius console — endpoint Running on H100 SXM](images/console-endpoint-running.png)
 - **Sample recognition results** (≥2 distinct document types, captured live against `v31` on 2026-06-18):
   - `samples/recognize_srb_passport.json` — `mode=auto`
   - `samples/recognize_esp_id.json` — `mode=auto`
   - `samples/recognize_srb_passport_blueprint.json` — `mode=blueprint` (matches eval job methodology; full field set incl. MRZ)
   - `samples/recognize_esp_id_blueprint.json` — `mode=blueprint` (matches eval job methodology; full field set incl. MRZ)
-- **Evaluation summary report:** `samples/eval_report.json` <!-- TODO: copy eval/reports/<job_id>.json from a live eval run before submission; S3 read access to eval/reports/ needs verifying — denied with current local creds as of 2026-06-18 -->
+- **Evaluation summary report:** `samples/eval_report.json` — the MIDV-2020 eval Job's summary
+  (per-field accuracy, calibration, latency, cost), the source of the numbers in the accuracy
+  and Cost/Latency tables above. Produced by `nebius-job/job.py`; see
+  [`samples/README.md`](samples/README.md) for the capture command.
 
 See [`samples/README.md`](samples/README.md) for the exact capture commands and a note on why
 both `auto` and `blueprint` variants are included.
@@ -523,11 +537,11 @@ Measured on a single H100 SXM endpoint, 60 documents, `mode=blueprint`:
 
 | Metric | Value |
 |---|---|
-| Latency p50 | 1.84 s/doc |
-| Latency p95 | 2.34 s/doc |
-| Total for 60 docs | 124 s |
+| Latency p50 | 1.72 s/doc |
+| Latency p95 | 2.01 s/doc |
+| Total for 60 docs | 111 s (wall-clock) |
 | GPU cost (H100 SXM @ $2.80/hr) | ~$0.001/doc (marginal, during batch) |
-| **1 000 docs (projected)** | **~$1.00** (marginal compute only) |
+| **1 000 docs (projected)** | **~$1.04** (marginal compute only) |
 
 The ~$0.001/doc is the **marginal** processing cost during the batch — it does not include
 warm-up or the idle seconds while the endpoint is up. Nebius Serverless GPU Endpoints are

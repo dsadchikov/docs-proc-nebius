@@ -8,7 +8,7 @@ Legal teams run on documents. Before a lawyer can act for a client, that client'
 
 For the Nebius Serverless AI Builders Challenge we built **docs-proc-nebius**: the document-recognition component for a legal Copilot. It extracts structured fields from identity documents, attaches a *calibrated confidence score to every field*, enforces output structure with guided JSON decoding, and runs as a single Nebius Serverless GPU Endpoint. This post is in two parts: first the **functional story** — the problem, the build-vs-buy decision, and what the component actually does — and then a **technical deep dive** for readers who want the implementation.
 
-> **TL;DR** — A FastAPI + vLLM service running `Qwen2.5-VL-7B-Instruct` on one Nebius H100 SXM turns an ID photo into schema-validated JSON with a confidence score on every field. Live inference runs on a Serverless **Endpoint**; the 60-document evaluation runs from the *same* Docker image as a portable, env-driven container, ready to drop into Nebius Serverless Jobs (the next step). ~1.84 s/doc (p50), ~$0.001/doc marginal, 100% on `document_number`. The interesting parts: how we got log-probabilities to behave as a confidence signal, and the three ways the Nebius deploy failed before it worked.
+> **TL;DR** — A FastAPI + vLLM service running `Qwen2.5-VL-7B-Instruct` on one Nebius H100 SXM turns an ID photo into schema-validated JSON with a confidence score on every field. Live inference runs on a Serverless **Endpoint**; the 60-document evaluation runs from the *same* Docker image as a portable, env-driven container, ready to drop into Nebius Serverless Jobs (the next step). ~1.72 s/doc (p50), ~$0.001/doc marginal, 100% on `document_number`. The interesting parts: how we got log-probabilities to behave as a confidence signal, and the three ways the Nebius deploy failed before it worked.
 
 ---
 
@@ -108,7 +108,7 @@ Once it came up, the proof is mundane and exactly what matters: the Nebius conso
 
 ## Evaluating on MIDV-2020
 
-We ran 60 documents across three types — Spanish national ID, Greek passport, Serbian passport — through the live endpoint with `mode=blueprint`. `document_number` came back at 100%; `surname` at 65%; the dates lagged at 33%. The dates were a red herring: MIDV stores them as `DD.MM.YYYY` and the model emits `YYYY-MM-DD`. The right fix was to **normalize at the metric layer, not the prompt** — normalizing both sides to `YYYYMMDD` took dates from 0% to 33% without touching the prompt. Greek-script fields dragged the Greek passport down to 25%, because a 7B model approximates polytonic Greek rather than transcribing it exactly — a known model-size limitation, not a pipeline bug.
+We ran 60 documents across three types — Spanish national ID, Greek passport, Serbian passport — through the live endpoint with `mode=blueprint`. `document_number` came back at 100%; `surname` at 50%; the dates lagged at 33%. The dates were a red herring: MIDV stores them as `DD.MM.YYYY` and the model emits `YYYY-MM-DD`. The right fix was to **normalize at the metric layer, not the prompt** — normalizing both sides to `YYYYMMDD` took dates from 0% to 33% without touching the prompt. Greek-script fields dragged the Greek passport down to 25%, because a 7B model approximates polytonic Greek rather than transcribing it exactly — a known model-size limitation, not a pipeline bug.
 
 ## Default vs. blueprint: a Spanish ID walkthrough
 
@@ -128,7 +128,7 @@ That's the case for blueprints in one document: the catch-all schema is good eno
 
 ## Performance and cost
 
-On a single H100 SXM, those 60 documents ran at **~1.84 s/doc (p50)**, **2.34 s/doc (p95)**, 124 s total. At the H100 SXM rate that's a **marginal ~$0.001/document** during the batch (~$1 projected per 1,000 docs) — the compute spent actually processing, not counting warm-up or idle time the endpoint is up. The real cost lever is operational: because you're billed per second the endpoint *runs* and nothing while it's *stopped*, the bursty business-hours profile of a KYC workload lets you stop the endpoint off-hours instead of paying for a reserved H100 around the clock — the whole reason serverless won the build-vs-buy decision in Part 1.
+On a single H100 SXM, those 60 documents ran at **~1.72 s/doc (p50)**, **2.01 s/doc (p95)**, 111 s total. At the H100 SXM rate that's a **marginal ~$0.001/document** during the batch (~$1 projected per 1,000 docs) — the compute spent actually processing, not counting warm-up or idle time the endpoint is up. The real cost lever is operational: because you're billed per second the endpoint *runs* and nothing while it's *stopped*, the bursty business-hours profile of a KYC workload lets you stop the endpoint off-hours instead of paying for a reserved H100 around the clock — the whole reason serverless won the build-vs-buy decision in Part 1.
 
 ## What we learned
 
