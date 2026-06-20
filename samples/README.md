@@ -39,7 +39,7 @@ export NEBIUS_ENDPOINT_TOKEN="<AUTH_TOKEN>"
 # 0. Before capturing: make sure the blueprint catalog has no stale drafts.
 #    Only id_card/default/passport/residence_permit_ltu_front should be listed — leftover
 #    demo_gen_* drafts from manual /demo testing pollute mode=auto classification (happened
-#    once during v31 capture, see CLAUDE.md "Deploy incident log"). DELETE any stragglers first:
+#    once during a capture run). DELETE any stragglers first:
 #    curl -X DELETE "$NEBIUS_ENDPOINT_URL/blueprints/<id>" -H "Authorization: Bearer $NEBIUS_ENDPOINT_TOKEN"
 curl -s "$NEBIUS_ENDPOINT_URL/blueprints" -H "Authorization: Bearer $NEBIUS_ENDPOINT_TOKEN" | python3 -m json.tool
 

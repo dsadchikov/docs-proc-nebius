@@ -52,7 +52,7 @@ nebius iam get-access-token | docker login "$REGISTRY" --username iam --password
 #
 # `--registry-username`/`--registry-password` are MANDATORY as of the v31 incident
 # (2026-06-18): Nebius's implicit same-project registry auth stopped working —
-# see the "Deploy incident log" in CLAUDE.md. Mint a fresh IAM token right before
+# see DEPLOYMENT.md for the rationale. Mint a fresh IAM token right before
 # create (it's short-lived).
 IAMTOK=$(nebius iam get-access-token)
 nebius ai endpoint create \
