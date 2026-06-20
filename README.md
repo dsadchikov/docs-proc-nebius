@@ -497,11 +497,11 @@ docker run --rm \
 
 Results are written to `eval/results/<job_id>/` in NOS and a summary report to `eval/reports/<job_id>.json`.
 
-The eval harness (`nebius-job/`) reuses the **same Docker image and code path** as the
-endpoint and is fully env-driven, so it's shaped to run as a **Nebius Serverless Job**. Today
-it runs as a container against the live endpoint; packaging it as a Serverless Job is the next
-step on the roadmap. This submission's Serverless product in production is the **Endpoint**
-(live `/recognize`).
+`nebius-job/` is built from the endpoint's Dockerfile and configured entirely through the
+environment variables listed in `job.py` (`MANIFEST_PATH`, `OUTPUT_PATH`, `ENDPOINT_URL`,
+`ENDPOINT_TOKEN`, `S3_*`). No code or image changes are needed to target a **Nebius Serverless
+Job** — current deployments run it as a container against the live endpoint. The production
+Serverless surface for this submission is the **Endpoint** (`POST /recognize`).
 
 ---
 
@@ -543,10 +543,10 @@ Measured on a single H100 SXM endpoint, 60 documents, `mode=blueprint`:
 | GPU cost (H100 SXM @ $2.80/hr) | ~$0.001/doc (marginal, during batch) |
 | **1 000 docs (projected)** | **~$1.04** (marginal compute only) |
 
-The ~$0.001/doc is the **marginal** processing cost during the batch — it does not include
-warm-up or the idle seconds while the endpoint is up. Nebius Serverless GPU Endpoints are
-billed per second **while running**, with **no charge while stopped** — so the real saving for
-a bursty workload comes from stopping the endpoint between bursts, not from per-request billing.
+The ~$0.001/doc figure counts only **marginal** processing time during the batch, excluding
+warm-up and idle seconds. Billing is per running-second, with zero charge once the endpoint is
+stopped. For a KYC workload (busy in business hours, idle overnight), cost is therefore driven
+mainly by uptime — stopping the endpoint off-hours, not the per-document compute, is the lever.
 
 ---
 
