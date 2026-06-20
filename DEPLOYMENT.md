@@ -205,9 +205,9 @@ build, no QEMU emulation):
 |---|---|
 | Browser login / re-auth (manual step) | a few minutes, depends on how fast you click the link |
 | Project, subnet, registry, bucket, IAM, access key (steps 0–5) | well under a minute combined |
-| `docker build` + push (base image pull + model weight download) | ~4–10 minutes |
+| `docker build` + push (base image pull + model weight download) | ~10–15 minutes |
 | Blueprint upload | a few seconds |
-| Endpoint create + wait for `RUNNING` (image pull + vLLM weight load on the GPU VM) | several minutes |
+| Endpoint create + wait for `RUNNING` (cold pull of the ~45–50 GB image + vLLM weight load on the GPU VM) | ~15–30 minutes |
 | Smoke test (35 tests) | under a minute |
 | Teardown | under a minute |
 
