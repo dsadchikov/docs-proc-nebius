@@ -135,6 +135,5 @@ with Nebius Object Storage (NOS) for blueprints, inbound uploads, and results.
 
 ---
 
-*Companion documents: `README.md` (setup & API), the C4 model in `internal-docs/`, and the
-requirements spec under `.kiro/specs/`. Hardening changes referenced above are implemented in
+*Companion documents: `README.md` (setup & API). Hardening changes referenced above are implemented in
 `nebius-endpoint/app/` and covered by `nebius-endpoint/tests/test_hardening.py`.*
