@@ -58,11 +58,11 @@ extractor.py                      blueprint_loader.py
 | **Blueprint generation** | Two-pass VLM workflow: infer fields from a sample image, return a draft blueprint |
 | **NOS integration** | Presigned PUT upload (`GET /inbound/presign`), outbound results written to NOS |
 | **Demo UI** | `GET /demo` — vanilla JS, confidence bars, bounding-box canvas overlay, one-click MIDV samples |
-| **Property tests** | Hypothesis-based tests (P11–P14) cover logprob math, guided schema, grouping, metric bounds |
+| **Property tests** | Hypothesis-based tests (P11–P14) cover logprob math, guided schema, grouping, metric bounds | 
 
 ---
 
-## Quick Start — Deploy From Scratch
+## Quick Start —  Deploy From Scratch
 
 > For full detail (browser auth on headless hosts, disk space sizing, timing
 > breakdown, teardown) see [DEPLOYMENT.md](DEPLOYMENT.md). This section is the
