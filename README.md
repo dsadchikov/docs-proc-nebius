@@ -3,8 +3,8 @@
 **Serverless document-recognition service** built for the [Nebius Serverless AI Builders Challenge](https://nebius.com/blog/posts/ai-builders-challenge).
 
 📝 **Blog post:** [Read on Medium](https://medium.com/@iplk.lit/serverless-document-recognition-on-nebius-kyc-for-a-legal-copilot-550f1281dbdd) — the full problem / architecture / results write-up.
-📹 **Video walkthrough:** [Watch on Loom](https://www.loom.com/share/2918e66676374783a1c1e2bf83d7b5bf) — what we built, why this approach, and how Nebius Serverless fits in (3–10 min).
-🎬 **Deploy & demo (bonus):** [Watch on Loom](https://www.loom.com/share/781c4f9a64914a86ab4c0b0d11dc9618) — a live from-scratch deploy and a demo run end-to-end.
+📹 **Video walkthrough:** [Watch on Loom](https://www.loom.com/share/2918e66676374783a1c1e2bf83d7b5bf) — what we built, why this approach, and how Nebius Serverless fits in (6 min).
+🎬 **Deploy & demo (bonus):** [Watch on Loom](https://www.loom.com/share/781c4f9a64914a86ab4c0b0d11dc9618) — a live from-scratch deploy and a demo run end-to-end (4 min).
 🔎 **Proof of execution:** see [Proof of Execution](#proof-of-execution) (live endpoint URL, sample results, eval report).
 🚀 **Deploying it yourself?** See [DEPLOYMENT.md](DEPLOYMENT.md) for the full step-by-step guide (prerequisites, browser auth, disk space, deploy/teardown scripts, timing).
 
